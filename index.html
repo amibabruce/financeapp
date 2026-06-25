@@ -883,9 +883,10 @@ function PF1Final() {
       const saved = JSON.parse(localStorage.getItem('pf_accounts') || 'null');
       // 檢查是否為正確的銀行帳戶格式（有 type 欄位）
       const isValid = saved && saved.length > 0 && saved[0].type !== undefined;
-      return isValid ? saved : defaultAccounts;
+      // 乾淨版（PF_SEED_DISABLED）不要 fallback 回示範帳戶，直接給空陣列
+      return isValid ? saved : (window.PF_SEED_DISABLED ? [] : defaultAccounts);
     } catch {
-      return defaultAccounts;
+      return window.PF_SEED_DISABLED ? [] : defaultAccounts;
     }
   });
 
@@ -5387,9 +5388,10 @@ function PF3Final() {
   const [items, setItems] = React.useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pf_recurring') || 'null');
-      return saved && saved.length ? saved : defaultRecurring;
+      // 乾淨版（PF_SEED_DISABLED）不要 fallback 回示範定期收支，直接給空陣列
+      return saved && saved.length ? saved : (window.PF_SEED_DISABLED ? [] : defaultRecurring);
     } catch {
-      return defaultRecurring;
+      return window.PF_SEED_DISABLED ? [] : defaultRecurring;
     }
   });
   const saveItems = list => {
@@ -8794,7 +8796,7 @@ function PF6Final() {
     {id:'a15',name:'New Balance 550',catType:'鞋子',purchaseDate:'2024-04-12',purchasePrice:3980,currentValue:3200,warrantyDate:'',warrantyNote:'',notes:''},
     {id:'a16',name:'Nike Dunk Low',catType:'鞋子',purchaseDate:'2024-09-01',purchasePrice:3290,currentValue:2800,warrantyDate:'',warrantyNote:'',notes:''},
   ];
-  const [assets, setAssets] = React.useState(() => { try { const s=JSON.parse(localStorage.getItem('pf_assets')||'null'); return s&&s.length>0?s:DEFAULT_ASSETS; } catch { return DEFAULT_ASSETS; }});
+  const [assets, setAssets] = React.useState(() => { try { const s=JSON.parse(localStorage.getItem('pf_assets')||'null'); return s&&s.length>0?s:(window.PF_SEED_DISABLED?[]:DEFAULT_ASSETS); } catch { return window.PF_SEED_DISABLED?[]:DEFAULT_ASSETS; }});
   const saveAssets = list => { setAssets(list); try { localStorage.setItem('pf_assets',JSON.stringify(list)); } catch {} };
 
   // ── 保險全頁面
@@ -9578,9 +9580,9 @@ function PF7Final() {
   const [invoices, setInvoices] = React.useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem('pf_invoices') || 'null');
-      return keep4months(s && s.length ? s : DEFAULT_INV);
+      return keep4months(s && s.length ? s : (window.PF_SEED_DISABLED ? [] : DEFAULT_INV));
     } catch {
-      return DEFAULT_INV;
+      return window.PF_SEED_DISABLED ? [] : DEFAULT_INV;
     }
   });
   const saveInvoices = list => {
@@ -10952,9 +10954,9 @@ function PF8Final() {
   const [accounts, setAccounts] = React.useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem('pf_memberships') || 'null');
-      return s && s.length > 0 ? s : DEFAULT_ACCS;
+      return s && s.length > 0 ? s : (window.PF_SEED_DISABLED ? [] : DEFAULT_ACCS);
     } catch {
-      return DEFAULT_ACCS;
+      return window.PF_SEED_DISABLED ? [] : DEFAULT_ACCS;
     }
   });
   const saveAccounts = list => {
@@ -11874,7 +11876,7 @@ function PF9Final() {
     status: "待處理"
   }].map(a => ({...a, ledger: 0}));
   const [alerts] = React.useState(() => {
-    try { const s = JSON.parse(localStorage.getItem('pf_reminders')||'null'); return s && s.length ? s : DEFAULT_ALERTS; } catch { return DEFAULT_ALERTS; }
+    try { const s = JSON.parse(localStorage.getItem('pf_reminders')||'null'); return s && s.length ? s : (window.PF_SEED_DISABLED ? [] : DEFAULT_ALERTS); } catch { return window.PF_SEED_DISABLED ? [] : DEFAULT_ALERTS; }
   });
   // ── 依目前帳本過濾（未標記 ledger 的舊資料預設歸帳本 0／日常）
   const ldgAlerts = alerts.filter(a => (a.ledger??0) === ledger);
@@ -12841,9 +12843,9 @@ function PF11Final() {
   const [wishlist, setWishlist] = React.useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem('pf_wishlist') || 'null');
-      return s && s.length > 0 ? s : defaultWishlist;
+      return s && s.length > 0 ? s : (window.PF_SEED_DISABLED ? [] : defaultWishlist);
     } catch {
-      return defaultWishlist;
+      return window.PF_SEED_DISABLED ? [] : defaultWishlist;
     }
   });
   const saveWishlist = items => {
@@ -12906,9 +12908,9 @@ function PF11Final() {
   const [preorders, setPreorders] = React.useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem('pf_preorder') || 'null');
-      return s && s.length > 0 ? s : defaultPreorders;
+      return s && s.length > 0 ? s : (window.PF_SEED_DISABLED ? [] : defaultPreorders);
     } catch {
-      return defaultPreorders;
+      return window.PF_SEED_DISABLED ? [] : defaultPreorders;
     }
   });
   const savePreorders = items => {
@@ -15918,10 +15920,10 @@ window.saveTx = function (tx) {
   return tx;
 };
 
-// ── 種子資料：pf_transactions（1–4 月各 20 筆，若 localStorage 為空自動填入）
-// 【乾淨版】關閉所有種子範例資料，上線給測試者的 App 一開始是完全空白狀態
+// 【乾淨版】關閉所有種子範例資料與各頁面內建示範資料，上線給測試者的 App 一開始是完全空白狀態
 window.PF_SEED_DISABLED = true;
 
+// ── 種子資料：pf_transactions（1–4 月各 20 筆，若 localStorage 為空自動填入）
 (function seedTransactions() {
   if (window.PF_SEED_DISABLED) return; // 乾淨版（上傳用）會設定這個旗標跳過種子資料
   try {
@@ -17341,8 +17343,8 @@ function PF13Final() {
     {id:'c10',bank:'第一',name:'iLEO卡',last4:'8901',limit:140000,billingDay:3,dueDay:20,color:'#A855F7',ledger:0}
   ];
   var cardsState = useState(function(){
-    try{ var s=JSON.parse(localStorage.getItem('pf_cards')||'null'); return s&&s.length?s:DEFAULT_CARDS; }
-    catch(e){ return DEFAULT_CARDS; }
+    try{ var s=JSON.parse(localStorage.getItem('pf_cards')||'null'); return s&&s.length?s:(window.PF_SEED_DISABLED?[]:DEFAULT_CARDS); }
+    catch(e){ return window.PF_SEED_DISABLED?[]:DEFAULT_CARDS; }
   });
   var cards = cardsState[0], setCards = cardsState[1];
   function saveCards(list){ setCards(list); try{ localStorage.setItem('pf_cards',JSON.stringify(list)); }catch(e){} }
@@ -17361,8 +17363,8 @@ function PF13Final() {
     return out;
   })();
   var billsState = useState(function(){
-    try{ var s=JSON.parse(localStorage.getItem('pf_card_bills')||'null'); return s&&s.length?s:DEFAULT_BILLS; }
-    catch(e){ return DEFAULT_BILLS; }
+    try{ var s=JSON.parse(localStorage.getItem('pf_card_bills')||'null'); return s&&s.length?s:(window.PF_SEED_DISABLED?[]:DEFAULT_BILLS); }
+    catch(e){ return window.PF_SEED_DISABLED?[]:DEFAULT_BILLS; }
   });
   var bills = billsState[0], setBills = billsState[1];
   function saveBills(list){ setBills(list); try{ localStorage.setItem('pf_card_bills',JSON.stringify(list)); }catch(e){} }
@@ -17373,8 +17375,8 @@ function PF13Final() {
     {id:'t3',cardId:'c2',date:'2026-04-22',desc:'Momo購物',category:'購物',amount:2380}
   ];
   var txsState = useState(function(){
-    try{ var s=JSON.parse(localStorage.getItem('pf_card_txs')||'null'); return s&&s.length?s:DEFAULT_TXS; }
-    catch(e){ return DEFAULT_TXS; }
+    try{ var s=JSON.parse(localStorage.getItem('pf_card_txs')||'null'); return s&&s.length?s:(window.PF_SEED_DISABLED?[]:DEFAULT_TXS); }
+    catch(e){ return window.PF_SEED_DISABLED?[]:DEFAULT_TXS; }
   });
   var txs = txsState[0], setTxs = txsState[1];
   function saveTxs(list){ setTxs(list); try{ localStorage.setItem('pf_card_txs',JSON.stringify(list)); }catch(e){} }
