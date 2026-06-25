@@ -4331,7 +4331,8 @@ function PF2Final() {
     open: false,
     defaultAcc: '',
     defaultType: 'expense',
-    defaultAmount: null
+    defaultAmount: null,
+    editTx: null
   });
   const [selTx, setSelTx] = React.useState(null); // 點擊交易 → 細部顯示
   // localStorage 即時交易清單
@@ -4369,39 +4370,9 @@ function PF2Final() {
   // 轉成週一起始
   const startOffset = (firstDay + 6) % 7;
 
-  // mock 當日交易
-  const mockDayTxs = [{
-    id: "mock-1",
-    date: "2026-04-29",
-    type: "expense",
-    cat: "🍜",
-    catName: "吃喝",
-    note: "午餐便當",
-    amount: 120,
-    time: "12:15",
-    acc: "台新 Richart"
-  }, {
-    id: "mock-2",
-    date: "2026-04-29",
-    type: "expense",
-    cat: "🚇",
-    catName: "交通",
-    note: "悠遊卡加值",
-    amount: 300,
-    time: "08:42",
-    acc: "台新主帳"
-  }, {
-    id: "mock-3",
-    date: "2026-04-29",
-    type: "expense",
-    cat: "☕",
-    catName: "吃喝",
-    note: "早餐咖啡",
-    amount: 160,
-    time: "07:55",
-    acc: "台新 Richart"
-  }];
-  const allMonthTxs = [...liveTxs, ...mockDayTxs].filter(t => (t.ledgerId || 'ldg-0') === ('ldg-' + ledger)); // 依帳本過濾（未標記者歸日常 ldg-0）
+  // 注意：這裡原本有一組寫死的「mock 當日交易」(mockDayTxs)，固定顯示 3 筆 2026-04-29 的假交易，
+  // 不存在 localStorage 裡、也不受「清除所有資料」影響，所以才會出現「清除後 4/29 資料還在」的狀況。已移除。
+  const allMonthTxs = liveTxs.filter(t => (t.ledgerId || 'ldg-0') === ('ldg-' + ledger)); // 依帳本過濾（未標記者歸日常 ldg-0）
   const monthPfx = `${year}-${String(month).padStart(2,'0')}-`;
   // 月統計：依當前帳本 + 當前月份實算（空帳本自然為 0）
   const monthTxsForStats = allMonthTxs.filter(t => t.date && t.date.startsWith(monthPfx));
@@ -4942,11 +4913,13 @@ function PF2Final() {
     open: txSheet.open,
     onClose: () => setTxSheet(s => ({
       ...s,
-      open: false
+      open: false,
+      editTx: null
     })),
     defaultAcc: txSheet.defaultAcc,
     defaultType: txSheet.defaultType,
-    defaultAmount: txSheet.defaultAmount
+    defaultAmount: txSheet.defaultAmount,
+    editTx: txSheet.editTx
   }), selTx && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
@@ -5168,11 +5141,10 @@ function PF2Final() {
     }
   }, "\u95DC\u9589"), /*#__PURE__*/React.createElement("div", {
     onClick: () => {
+      // 編輯模式：把整筆原始交易物件帶進去，存檔時會更新這一筆，不會多新增一筆
       setTxSheet({
         open: true,
-        defaultAcc: selTx.acc,
-        defaultType: selTx.type,
-        defaultAmount: selTx.amount
+        editTx: selTx
       });
       setSelTx(null);
     },
@@ -16184,6 +16156,28 @@ window.saveTx = function (tx) {
   }));
   return tx;
 };
+// 更新既有交易（編輯用）：依 id 找到原紀錄並覆蓋欄位，保留原 id/createdAt
+window.updateTx = function (id, patch) {
+  const list = window.getTxList();
+  const idx = list.findIndex(t => t.id === id);
+  if (idx === -1) return null;
+  list[idx] = { ...list[idx], ...patch, id };
+  try {
+    localStorage.setItem('pf_transactions', JSON.stringify(list));
+  } catch (e) {}
+  window.dispatchEvent(new CustomEvent('pf-tx-added', { detail: list[idx] }));
+  return list[idx];
+};
+// 刪除交易（編輯 Sheet 內的刪除鈕用）
+window.deleteTx = function (id) {
+  const list = window.getTxList();
+  const next = list.filter(t => t.id !== id);
+  try {
+    localStorage.setItem('pf_transactions', JSON.stringify(next));
+  } catch (e) {}
+  window.dispatchEvent(new CustomEvent('pf-tx-added', { detail: { deletedId: id } }));
+  return next;
+};
 
 // 乾淨版（GitHub Pages 上傳用）：關閉所有種子資料，避免覆蓋使用者真實資料
 window.PF_SEED_DISABLED = true;
@@ -16501,7 +16495,8 @@ function AddTxSheet({
   onClose,
   defaultAcc,
   defaultType,
-  defaultAmount
+  defaultAmount,
+  editTx // 編輯模式：傳入完整的原始交易物件，存檔時改成更新而不是新增；不傳就是「新增交易」模式
 }) {
   const [type, setType] = React.useState(defaultType || 'expense');
   const [amount, setAmount] = React.useState(defaultAmount ? String(Math.abs(Math.round(defaultAmount))) : '');
@@ -16528,28 +16523,54 @@ function AddTxSheet({
   };
   React.useEffect(() => {
     if (open) {
-      const t = defaultType || 'expense';
-      setType(t);
-      setCatId('');
-      setNote('');
-      setPhoto(null);
-      setAmount(defaultAmount ? String(Math.abs(Math.round(defaultAmount))) : '');
-      setTxDate(todayStr());
-      setInclude(false);
-      setShowCalc(false);
-      setShowNote(false);
-      setShowCatMgr(false);
-      setCalcDisplay('');
-      setCalcEq('');
-      setCurrency('TWD');
-      setFxRate(1);
       const first = (window.ACCT_NAMES || [])[0] || '';
       const second = (window.ACCT_NAMES || [])[1] || '';
-      setAcc(defaultAcc || first);
-      setFromAcc(first);
-      setToAcc(second);
+      if (editTx) {
+        // 編輯模式：用原始交易的內容回填每個欄位
+        const t = editTx.type || 'expense';
+        setType(t);
+        // 依 catName 在目前的分類清單裡找對應 id；找不到（例如分類後來被刪了）就留空，會顯示該類型的第一個分類
+        const catList = window.getCategories ? window.getCategories(t) : [];
+        const matched = catList.find(c => c.label === editTx.catName);
+        setCatId(matched ? matched.id : '');
+        setNote(editTx.note || '');
+        setPhoto(null);
+        // amountOrig 是原始輸入幣別的金額（非台幣交易才有），沒有就用台幣金額本身
+        setAmount(String(Math.abs(Math.round(editTx.amountOrig != null ? editTx.amountOrig : editTx.amount))));
+        setTxDate(editTx.date || todayStr());
+        setInclude(false);
+        setShowCalc(false);
+        setShowNote(false);
+        setShowCatMgr(false);
+        setCalcDisplay('');
+        setCalcEq('');
+        setCurrency(editTx.currency || 'TWD');
+        setFxRate(editTx.fxRate || 1);
+        setAcc(editTx.acc || first);
+        setFromAcc(first);
+        setToAcc(second);
+      } else {
+        const t = defaultType || 'expense';
+        setType(t);
+        setCatId('');
+        setNote('');
+        setPhoto(null);
+        setAmount(defaultAmount ? String(Math.abs(Math.round(defaultAmount))) : '');
+        setTxDate(todayStr());
+        setInclude(false);
+        setShowCalc(false);
+        setShowNote(false);
+        setShowCatMgr(false);
+        setCalcDisplay('');
+        setCalcEq('');
+        setCurrency('TWD');
+        setFxRate(1);
+        setAcc(defaultAcc || first);
+        setFromAcc(first);
+        setToAcc(second);
+      }
     }
-  }, [open]);
+  }, [open, editTx]);
   const expCats = window.getCategories ? window.getCategories('expense') : [];
   const incCats = window.getCategories ? window.getCategories('income') : [];
   const cats = type === 'expense' ? expCats : incCats;
@@ -16588,8 +16609,28 @@ function AddTxSheet({
     if (!amt || amt <= 0) return;
     const now = new Date();
     const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-    const d = new Date(txDate);
-    const dateStr = String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0');
+    // 直接用 txDate（<input type="date"> 給的就是完整 YYYY-MM-DD），不要再轉成 MM/DD，
+    // 否則會跟月曆篩選用的完整日期格式對不起來，新增的交易會在月曆上完全消失
+    const dateStr = txDate || todayStr();
+    if (editTx) {
+      // 編輯模式：更新原本那一筆，不會多新增一筆（轉帳類型的交易不支援在這裡編輯，只能編輯單一筆一般收支）
+      const amtTWD = window.pfToTWD(amt, currency, fxRate);
+      window.updateTx(editTx.id, {
+        type,
+        amount: amtTWD,
+        amountOrig: amt,
+        currency,
+        fxRate,
+        cat: safeCat?.emoji || '📝',
+        catName: safeCat?.label || '其他',
+        note: note.trim() || safeCat?.label || '',
+        acc: acc || acctList[0] || '',
+        time: editTx.time || timeStr,
+        date: dateStr
+      });
+      onClose();
+      return;
+    }
     if (isTransfer) {
       const shared = {
         cat: '↔️',
@@ -16638,6 +16679,15 @@ function AddTxSheet({
       return;
     }
     onClose();
+  };
+
+  // 刪除這筆交易（只有編輯模式才會用到）
+  const handleDelete = () => {
+    if (!editTx) return;
+    if (window.confirm('確定要刪除這筆交易嗎？此操作無法復原。')) {
+      window.deleteTx(editTx.id);
+      onClose();
+    }
   };
 
   // 計算機操作
@@ -16759,7 +16809,7 @@ function AddTxSheet({
       borderRadius: 10,
       padding: 3
     }
-  }, [['expense', '支出', '52,216,130'], ['income', '收入', '255,95,87'], ['transfer', '轉帳', '59,130,246']].map(([v, lbl, rgb]) => {
+  }, (editTx ? [['expense', '支出', '52,216,130'], ['income', '收入', '255,95,87']] : [['expense', '支出', '52,216,130'], ['income', '收入', '255,95,87'], ['transfer', '轉帳', '59,130,246']]).map(([v, lbl, rgb]) => {
     const active = type === v;
     return /*#__PURE__*/React.createElement("div", {
       key: v,
@@ -17251,7 +17301,25 @@ function AddTxSheet({
       transition: 'all .15s',
       gap: 6
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\u2713"), /*#__PURE__*/React.createElement("span", null, isTransfer ? '確認轉帳' : '確認新增', includeAsset && !isTransfer ? ' → 前往資產' : '')))), showCalc && /*#__PURE__*/React.createElement(CalcSubOverlay, {
+  }, /*#__PURE__*/React.createElement("span", null, "\u2713"), /*#__PURE__*/React.createElement("span", null, isTransfer ? '確認轉帳' : (editTx ? '儲存修改' : '確認新增'), includeAsset && !isTransfer ? ' → 前往資產' : '')), editTx && /*#__PURE__*/React.createElement("div", {
+    onClick: handleDelete,
+    style: {
+      width: '100%',
+      height: 44,
+      borderRadius: 14,
+      background: 'rgba(255,95,87,.12)',
+      border: '1px solid rgba(255,95,87,.35)',
+      color: '#FF5F57',
+      fontSize: 14,
+      fontWeight: 600,
+      fontFamily: 'var(--font-zh)',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 10
+    }
+  }, "\u{1F5D1}\u{FE0F} 刪除這筆交易"))), showCalc && /*#__PURE__*/React.createElement(CalcSubOverlay, {
     onDismiss: () => setShowCalc(false)
   }, /*#__PURE__*/React.createElement("div", {
     style: {
