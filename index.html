@@ -165,10 +165,10 @@ var PF_CARD_STYLE = {
 // 舊資料沒有這兩個欄位 → pfToTWD 會自動當作 TWD/1，完全不影響既有資料與計算結果。
 // 每個幣別都有 code（代碼）+ zh（中文名稱），下拉選單會顯示「代碼 中文名稱」方便辨識。
 window.PF_CURRENCIES = [
-  { code: 'TWD', zh: '臺灣' },
-  { code: 'USD', zh: '美國' },
-  { code: 'JPY', zh: '日本' },
-  { code: 'KRW', zh: '韓國' },
+  { code: 'TWD', zh: '新臺幣' },
+  { code: 'USD', zh: '美金' },
+  { code: 'JPY', zh: '日幣' },
+  { code: 'KRW', zh: '韓元' },
   { code: 'EUR', zh: '歐元' },
   { code: 'CNY', zh: '人民幣' }
 ];
@@ -3215,7 +3215,7 @@ function PF1Final() {
       fontFamily: "var(--font-zh)",
       fontSize: 11
     }
-  }, "\u5171\u4EAB"), /*#__PURE__*/React.createElement("span", {
+  }, "\u5171\u4EAB\uFF08\u958B\u767C\u4E2D\uFF09"), /*#__PURE__*/React.createElement("span", {
     onClick: () => {
       setEditLdgId(l.id);
       setEditLdgName(l.name);
@@ -3390,7 +3390,7 @@ function PF1Final() {
       gap: 8
     }
   }, /*#__PURE__*/React.createElement("div", {
-    onClick: () => setMode((mode + 1) % 4),
+    onClick: () => setMode((mode + 1) % 3), // 共 3 種模式（資產淨值已移除），這裡之前還是寫死 %4，多按一次就會跳到不存在的 index 3 → 整頁當掉
     style: {
       fontFamily: "var(--font-en)",
       fontWeight: 800,
@@ -3440,7 +3440,7 @@ function PF1Final() {
       display: "flex",
       gap: 4
     }
-  }, [0, 1, 2, 3].map(i => /*#__PURE__*/React.createElement("div", {
+  }, [0, 1, 2].map(i => /*#__PURE__*/React.createElement("div", {
     key: i,
     onClick: () => setMode(i),
     style: {
@@ -5512,12 +5512,12 @@ function PF3Final() {
   const nextMonthExp = ldgItems.filter(i => i.type === 'expense')
     .reduce((s, i) => s + i.amount * (freqToMonth[i.freq] || 1), 0);
   const nextMonthNet = nextMonthInc - nextMonthExp;
-  // ── 類別篩選（與週期篩選並列的第二排篩選）：「收入」代表所有收入項目，其餘為支出分類 ──
-  const expCatLabels3 = [...new Set(ldgItems.filter(i => i.type === 'expense').map(i => i.catLabel).filter(Boolean))];
-  const catTabs3 = ['全部', '收入', ...expCatLabels3];
+  // ── 類別篩選（與週期篩選並列的第二排篩選）：「收入」代表所有收入項目，其餘用固定的 8 個支出大分類 ──
+  // 大分類只用在這個篩選列，小分類（catLabel）的歸屬用 window.getExpCatGroup 反查
+  const catTabs3 = ['全部', '收入', ...window.PF_EXP_GROUPS];
   const filtered = ldgItems.filter(i =>
     (freqFilter === 'all' || i.freq === freqFilter) &&
-    (catFilter3 === '全部' || (catFilter3 === '收入' ? i.type === 'income' : i.catLabel === catFilter3))
+    (catFilter3 === '全部' || (catFilter3 === '收入' ? i.type === 'income' : (i.type === 'expense' && window.getExpCatGroup(i.catLabel) === catFilter3)))
   );
   const totalInc = nextMonthInc; // 與月均收入相同
   const totalExp = nextMonthExp; // 與月均支出相同
@@ -5537,6 +5537,16 @@ function PF3Final() {
   const [calcDisplay3, setCalcDisplay3] = React.useState('');
   const [calcEq3, setCalcEq3] = React.useState('');
   const [showFNotes3, setShowFNotes3] = React.useState(false);
+  // 大分類篩選（比照 PF2 記帳的設計）：只有支出才用得到，幫忙從一堆小分類裡先縮小範圍
+  const [catGroupFilter3, setCatGroupFilter3] = React.useState('一般');
+  // 分類管理（齒輪圖示開啟），比照 PF2 記帳
+  const [showCatMgr3, setShowCatMgr3] = React.useState(false);
+  // 拍照記錄（比照 PF2 記帳）：目前只是選圖預覽，還沒真的存進這筆定期收支
+  const [fPhoto3, setFPhoto3] = React.useState(null);
+  // 設定提醒（比照 PF2 記帳）：勾選後選日期+時間，存檔時寫入 pf_reminders，並用 sourceId 串聯這筆定期收支
+  const [fRemindOn3, setFRemindOn3] = React.useState(false);
+  const [fRemindDate3, setFRemindDate3] = React.useState('');
+  const [fRemindTime3, setFRemindTime3] = React.useState('09:00');
   const openAdd = () => {
     setFName('');
     setFType('expense');
@@ -5550,6 +5560,11 @@ function PF3Final() {
     setFNotes('');
     setShowCalc3(false); setCalcDisplay3(''); setCalcEq3('');
     setShowFNotes3(false);
+    setCatGroupFilter3('一般');
+    setFPhoto3(null);
+    setFRemindOn3(false);
+    setFRemindDate3('');
+    setFRemindTime3('09:00');
     setEditItem({});
   };
   const openEdit = item => {
@@ -5568,7 +5583,53 @@ function PF3Final() {
     setFNotes(item.notes || '');
     setShowCalc3(false); setCalcDisplay3(''); setCalcEq3('');
     setShowFNotes3(false);
+    // 編輯模式：大分類篩選跟著這筆原本的小分類走，找不到（例如舊資料）就用「一般」
+    setCatGroupFilter3(item.type === 'expense' ? (window.getExpCatGroup(item.catLabel) || '一般') : '一般');
+    setFPhoto3(null);
+    // 編輯模式：檢查這筆定期收支是否已經串聯一個提醒（pf_reminders 裡 sourceId 對到這筆的 id），有就帶出來顯示
+    try {
+      const remList = JSON.parse(localStorage.getItem('pf_reminders') || '[]');
+      const linked = remList.find(r => r.sourceId === item.id);
+      if (linked) {
+        setFRemindOn3(true);
+        setFRemindDate3(linked.date || '');
+        setFRemindTime3(linked.time || '09:00');
+      } else {
+        setFRemindOn3(false);
+        setFRemindDate3('');
+        setFRemindTime3('09:00');
+      }
+    } catch {
+      setFRemindOn3(false);
+    }
     setEditItem(item);
+  };
+  // 把這筆定期收支的提醒狀態同步進 pf_reminders（勾選=新增或更新；取消勾選=刪除舊的），比照 PF2 記帳的 syncReminder
+  const syncReminder3 = (recId, recName) => {
+    try {
+      const list = JSON.parse(localStorage.getItem('pf_reminders') || '[]');
+      const idx = list.findIndex(r => r.sourceId === recId);
+      if (fRemindOn3) {
+        const r = {
+          id: idx >= 0 ? list[idx].id : 'rem' + Date.now(),
+          title: (recName || '定期收支') + ' 提醒',
+          date: fRemindDate3 || fDate || '',
+          time: fRemindTime3 || '09:00',
+          type: '定期收支',
+          status: idx >= 0 ? list[idx].status : '待處理',
+          repeat: idx >= 0 ? list[idx].repeat : '不重複',
+          notes: fNotes.trim() || '',
+          sourceId: recId,
+          ledger: ledger3
+        };
+        if (idx >= 0) list[idx] = r; else list.unshift(r);
+        localStorage.setItem('pf_reminders', JSON.stringify(list));
+      } else if (idx >= 0) {
+        // 之前有勾，現在取消了 → 把舊的提醒移除，避免留下沒人管的孤兒提醒
+        list.splice(idx, 1);
+        localStorage.setItem('pf_reminders', JSON.stringify(list));
+      }
+    } catch {}
   };
   const handleSave = () => {
     if (!fName.trim() || !fAmt) return;
@@ -5601,10 +5662,17 @@ function PF3Final() {
     } else {
       saveItems([record, ...items]);
     }
+    syncReminder3(record.id, record.name || record.catLabel);
     setEditItem(null);
   };
   const handleDelete = id => {
     saveItems(items.filter(i => i.id !== id));
+    // 連同刪除這筆定期收支串聯的提醒，避免留下孤兒提醒
+    try {
+      const list = JSON.parse(localStorage.getItem('pf_reminders') || '[]');
+      const next = list.filter(r => r.sourceId !== id);
+      if (next.length !== list.length) localStorage.setItem('pf_reminders', JSON.stringify(next));
+    } catch {}
     setEditItem(null);
   };
   // ── PF3 計算機 helpers ──
@@ -6072,6 +6140,14 @@ function PF3Final() {
       )
     ),
     /*#__PURE__*/React.createElement("div", {style:{padding:'14px 20px 0'}},
+      // 智能辨識／語音輸入（比照 PF2 記帳）：還沒接真正的 AI 辨識/語音引擎，先標「開發中」並用 alert 說明
+      /*#__PURE__*/React.createElement("div", {style:{display:'flex',gap:8,marginBottom:16,padding:'10px 14px',background:'rgba(59,130,246,.08)',border:'1px solid rgba(59,130,246,.18)',borderRadius:14}},
+        [['📷','智能辨識'],['🎙️','語音輸入']].map(([icon,lbl]) => /*#__PURE__*/React.createElement("div", {
+          key:lbl,
+          onClick: () => alert(lbl + ' 功能開發中，敬請期待！目前請直接手動輸入金額與分類。'),
+          style:{flex:1,background:'rgba(255,255,255,.08)',borderRadius:9,padding:'8px 6px',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,opacity:.55}
+        }, /*#__PURE__*/React.createElement("span", {style:{fontSize:18}}, icon), /*#__PURE__*/React.createElement("span", {style:{fontFamily:'var(--font-zh)',fontSize:11,fontWeight:600,color:'var(--fg-2)'}}, lbl + '（開發中）')))
+      ),
       /*#__PURE__*/React.createElement("div", {style:{marginBottom:12}},
         /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',gap:6,marginBottom:6}},
           /*#__PURE__*/React.createElement("span", {style:{fontSize:14}}, "✏️"),
@@ -6091,9 +6167,29 @@ function PF3Final() {
         onCurrencyChange: setFCurrency, onRateChange: setFFxRate
       }),
       /*#__PURE__*/React.createElement("div", {style:{marginBottom:16}},
-        /*#__PURE__*/React.createElement("div", {style:{fontFamily:'var(--font-zh)',fontSize:13,fontWeight:700,color:'var(--fg-2)',marginBottom:10}}, "選擇分類"),
+        /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}},
+          /*#__PURE__*/React.createElement("div", {style:{fontFamily:'var(--font-zh)',fontSize:13,fontWeight:700,color:'var(--fg-2)'}}, "選擇分類"),
+          /*#__PURE__*/React.createElement("div", {onClick:()=>setShowCatMgr3(true), style:{fontSize:15,color:'var(--acc)',cursor:'pointer',padding:'2px 4px'}}, "⚙️")
+        ),
+        // 大分類頂部分頁（比照 PF2 記帳）：只有支出才有，點一下換大分類，下面小分類網格跟著篩選
+        fType === 'expense' && /*#__PURE__*/React.createElement("div", {style:{display:'flex',gap:6,overflowX:'auto',scrollbarWidth:'none',marginBottom:8}},
+          (window.PF_EXP_GROUPS || []).map(g => /*#__PURE__*/React.createElement("div", {
+            key: g,
+            onClick: () => {
+              setCatGroupFilter3(g);
+              // 換大分類後，自動帶出該大分類底下第一個小分類，避免「選中」的格子和實際要存的分類不一致
+              const firstIdx = fCats.findIndex(c => (c.group || '其他') === g);
+              setFCatIdx(firstIdx >= 0 ? firstIdx : 0);
+            },
+            style:{padding:'5px 12px',borderRadius:999,cursor:'pointer',flexShrink:0,fontFamily:'var(--font-zh)',fontSize:11,fontWeight:500,
+              background:catGroupFilter3===g?'rgba(59,130,246,.18)':'rgba(255,255,255,.06)',
+              color:catGroupFilter3===g?'var(--acc)':'var(--fg-3)',
+              border:'.5px solid '+(catGroupFilter3===g?'var(--acc)':'var(--border)')}
+          }, g))
+        ),
         /*#__PURE__*/React.createElement("div", {style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:7}},
-          fCats.map((c,ci) => {
+          (fType === 'expense' ? fCats.filter(c => (c.group || '其他') === catGroupFilter3) : fCats).map((c) => {
+            const ci = fCats.indexOf(c); // fCatIdx 存的是「在完整小分類清單中的位置」，要對應原始 fCats 的 index，不是篩選後清單的 index
             const sel3 = fCatIdx === ci;
             return /*#__PURE__*/React.createElement("div", {key:c.id||c.label, onClick:()=>setFCatIdx(ci), style:{padding:'7px 3px',borderRadius:11,background:sel3?'rgba(59,130,246,.18)':'rgba(255,255,255,.07)',border:sel3?'1.5px solid var(--acc)':'1px solid transparent',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,transition:'all .15s'}},
               /*#__PURE__*/React.createElement("div", {style:{fontSize:18}}, c.emoji),
@@ -6150,6 +6246,51 @@ function PF3Final() {
               /*#__PURE__*/React.createElement("div", {style:{fontSize:11,color:'var(--fg-4)',fontFamily:'var(--font-zh)'}}, fNotes||"點擊新增")
             )
       ),
+      // 拍照記錄＋設定提醒（比照 PF2 記帳）：拍照記錄目前只是選圖預覽，還沒真的存進這筆定期收支，先標「開發中」
+      /*#__PURE__*/React.createElement("div", {style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}},
+        /*#__PURE__*/React.createElement("div", {style:{padding:'10px 12px',minHeight:60,borderRadius:12,background:'rgba(255,255,255,.05)',border:'.5px solid rgba(255,255,255,.08)',opacity:.55}},
+          /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',gap:6,marginBottom:5}},
+            /*#__PURE__*/React.createElement("span", {style:{fontSize:14}}, "📸"),
+            /*#__PURE__*/React.createElement("span", {style:{fontSize:10,fontWeight:600,fontFamily:'var(--font-zh)',color:'var(--fg-4)'}}, "拍照記錄（開發中）")
+          ),
+          /*#__PURE__*/React.createElement("label", {style:{fontSize:10,color:'var(--acc)',fontFamily:'var(--font-zh)',cursor:'pointer',textAlign:'center',padding:'4px 0',background:'rgba(59,130,246,.1)',borderRadius:6,display:'block'}},
+            "📷 選擇照片",
+            /*#__PURE__*/React.createElement("input", {type:"file",accept:"image/*",onChange:e=>setFPhoto3(e.target.files[0]),style:{display:'none'}})
+          ),
+          fPhoto3 && /*#__PURE__*/React.createElement("div", {style:{fontSize:9,color:'var(--fg-4)',marginTop:3,fontFamily:'var(--font-zh)'}}, "已選擇（僅預覽，尚未儲存附件）")
+        ),
+        /*#__PURE__*/React.createElement("div", {
+          onClick: () => setFRemindOn3(v => !v),
+          style:{padding:'10px 12px',minHeight:60,borderRadius:12,cursor:'pointer',
+            background: fRemindOn3 ? 'rgba(59,130,246,.12)' : 'rgba(255,255,255,.05)',
+            border: '.5px solid ' + (fRemindOn3 ? 'rgba(59,130,246,.4)' : 'rgba(255,255,255,.08)')}
+        },
+          /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',gap:7,marginBottom:3}},
+            /*#__PURE__*/React.createElement("div", {style:{width:15,height:15,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,
+              background: fRemindOn3 ? 'var(--acc)' : 'rgba(255,255,255,.15)',
+              border: fRemindOn3 ? 'none' : '.5px solid rgba(255,255,255,.2)'}
+            }, fRemindOn3 && /*#__PURE__*/React.createElement("span", {style:{color:'#fff',fontSize:9,fontWeight:900}}, "✓")),
+            /*#__PURE__*/React.createElement("div", {style:{fontSize:12,fontWeight:700,fontFamily:'var(--font-zh)',color:fRemindOn3?'var(--acc)':'var(--fg)'}}, "🔔 設定提醒")
+          ),
+          /*#__PURE__*/React.createElement("div", {style:{fontSize:9,color:'var(--fg-4)',fontFamily:'var(--font-zh)'}}, fRemindOn3 ? "存檔後加入 PF9 提醒" : "選日期時間提醒自己")
+        )
+      ),
+      fRemindOn3 && /*#__PURE__*/React.createElement("div", {style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}},
+        /*#__PURE__*/React.createElement("div", {style:{display:'flex',flexDirection:'column',justifyContent:'center',padding:'10px 12px',minHeight:60,borderRadius:12,background:'rgba(255,255,255,.05)',border:'.5px solid rgba(255,255,255,.08)'}},
+          /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',gap:6,marginBottom:3}},
+            /*#__PURE__*/React.createElement("span", {style:{fontSize:14}}, "📅"),
+            /*#__PURE__*/React.createElement("span", {style:{fontSize:10,fontWeight:600,fontFamily:'var(--font-zh)',color:'var(--fg-4)'}}, "提醒日期")
+          ),
+          /*#__PURE__*/React.createElement("input", {type:"date",value:fRemindDate3 || fDate,onChange:e=>setFRemindDate3(e.target.value),style:{background:'transparent',border:'none',color:'var(--fg)',fontFamily:'var(--font-zh)',fontSize:13,fontWeight:600,outline:'none',width:'100%',padding:0,colorScheme:'dark'}})
+        ),
+        /*#__PURE__*/React.createElement("div", {style:{display:'flex',flexDirection:'column',justifyContent:'center',padding:'10px 12px',minHeight:60,borderRadius:12,background:'rgba(255,255,255,.05)',border:'.5px solid rgba(255,255,255,.08)'}},
+          /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',gap:6,marginBottom:3}},
+            /*#__PURE__*/React.createElement("span", {style:{fontSize:14}}, "⏰"),
+            /*#__PURE__*/React.createElement("span", {style:{fontSize:10,fontWeight:600,fontFamily:'var(--font-zh)',color:'var(--fg-4)'}}, "提醒時間")
+          ),
+          /*#__PURE__*/React.createElement("input", {type:"time",value:fRemindTime3,onChange:e=>setFRemindTime3(e.target.value),style:{background:'transparent',border:'none',color:'var(--fg)',fontFamily:'var(--font-zh)',fontSize:13,fontWeight:600,outline:'none',width:'100%',padding:0,colorScheme:'dark'}})
+        )
+      ),
       /*#__PURE__*/React.createElement("div", {style:{display:'flex',gap:10}},
         editItem.id && /*#__PURE__*/React.createElement("div", {onClick:()=>handleDelete(editItem.id), style:{width:44,height:44,borderRadius:12,background:'rgba(239,68,68,.15)',display:'grid',placeItems:'center',cursor:'pointer',fontSize:18,color:'var(--exp)',flexShrink:0}}, "🗑"),
         /*#__PURE__*/React.createElement("div", {onClick:handleSave, style:{flex:1,padding:'13px 0',textAlign:'center',borderRadius:14,cursor:'pointer',fontFamily:'var(--font-zh)',fontSize:15,fontWeight:700,color:'#fff',background:fName.trim()&&fAmt?'linear-gradient(135deg,#3B82F6,#8B5CF6)':'rgba(255,255,255,.12)',opacity:fName.trim()&&fAmt?1:0.5}}, editItem.id?"儲存變更":"新增")
@@ -6171,7 +6312,9 @@ function PF3Final() {
       /*#__PURE__*/React.createElement("div", {onClick:calcEquals3, style:{width:'100%',height:48,borderRadius:13,background:'rgba(52,216,130,.2)',color:'var(--inc)',fontSize:22,fontWeight:700,fontFamily:'var(--font-en)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',marginBottom:8}}, "="),
       /*#__PURE__*/React.createElement("div", {onClick:calcConfirm3, style:{width:'100%',height:48,borderRadius:13,background:'linear-gradient(135deg,var(--acc),#60A5FA)',color:'#fff',fontSize:15,fontWeight:700,fontFamily:'var(--font-zh)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',boxShadow:'0 4px 16px rgba(59,130,246,.3)'}}, "✓ 確認金額")
     )
-  )), /*#__PURE__*/React.createElement("style", null, `@keyframes pf1-pop{from{opacity:0;transform:scale(.92);}to{opacity:1;transform:scale(1);}} @keyframes pf1-fade{from{opacity:0;}to{opacity:1;}}`));
+  )), /*#__PURE__*/React.createElement("style", null, `@keyframes pf1-pop{from{opacity:0;transform:scale(.92);}to{opacity:1;transform:scale(1);}} @keyframes pf1-fade{from{opacity:0;}to{opacity:1;}}`),
+  // 分類管理畫面（齒輪點開），跟 PF2 記帳共用同一個元件，存檔後 fCats 會直接從 localStorage 重新讀到最新分類
+  showCatMgr3 && /*#__PURE__*/React.createElement(CatManagerSheet, {open: showCatMgr3, onClose: () => setShowCatMgr3(false), initType: fType}));
 }
 window.PF3Final = PF3Final;
 </script>
@@ -9828,12 +9971,11 @@ function PF7Final() {
     setEditId(null);
     setScanning(false);
   };
+  // 注意：這裡還沒接真正的相機/OCR辨識，只是動畫效果，最後一定是跳到空白的手動輸入表單
+  // 先用 alert 講清楚，避免使用者以為發票內容已經被自動讀出來、結果填的資料都是空的
   const doScan = () => {
-    setScanning(true);
-    setTimeout(() => {
-      setScanning(false);
-      setModal('form');
-    }, 1200);
+    alert('掃描辨識功能開發中，敬請期待！請先用「手動輸入」填寫發票資訊。');
+    setModal('form');
   };
   const handleSave = () => {
     if (!form.number.trim()) return;
@@ -10119,7 +10261,7 @@ function PF7Final() {
       color: "var(--fg-4)",
       marginTop: 8
     }
-  }, "\u9EDE\u4E0B\u65B9\u6309\u9215\u9032\u884C\u6383\u63CF"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u6383\u63CF\u8FA8\u8B58\u529F\u80FD\u958B\u767C\u4E2D\uFF0C\u8ACB\u6309\u300C\u624B\u52D5\u8F38\u5165\u300D"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 10
@@ -10150,7 +10292,7 @@ function PF7Final() {
       color: "#fff",
       cursor: "pointer"
     }
-  }, scanning ? "掃描中…" : "📸 掃描"), /*#__PURE__*/React.createElement("div", {
+  }, "📸 掃描（開發中）"), /*#__PURE__*/React.createElement("div", {
     onClick: () => setModal('form'),
     style: {
       flex: 1,
@@ -11279,13 +11421,13 @@ function PF8Final() {
       color: "var(--fg)",
       marginBottom: 6
     }
-  }, faceIdDone ? "驗證成功" : "正在驗證 Face ID"), /*#__PURE__*/React.createElement("div", {
+  }, faceIdDone ? "驗證成功" : "正在驗證（開發中）"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontFamily: "var(--font-zh)",
       fontSize: 12,
       color: "var(--fg-3)"
     }
-  }, faceIdDone ? "密碼已解鎖" : "請看向螢幕進行驗證…"), !faceIdDone && /*#__PURE__*/React.createElement("div", {
+  }, faceIdDone ? "密碼已解鎖" : "目前為模擬動畫，尚未串接真實 Face ID"), !faceIdDone && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16,
       height: 3,
@@ -11481,7 +11623,7 @@ function PF8Final() {
         fontSize: 10,
         color: "var(--fg-4)"
       }
-    }, "\u9700\u8981 Face ID \u9A57\u8B49\u624D\u80FD\u67E5\u770B\u5BC6\u78BC")), a.notes && /*#__PURE__*/React.createElement("div", {
+    }, "\u9700\u8981\u9A57\u8B49\u624D\u80FD\u67E5\u770B\u5BC6\u78BC\uFF08\u6A21\u64EC\u52D5\u756B\uFF0C\u958B\u767C\u4E2D\uFF09")), a.notes && /*#__PURE__*/React.createElement("div", {
       style: {
         padding: "12px 0",
         borderBottom: ".5px solid rgba(255,255,255,.07)"
@@ -11865,7 +12007,7 @@ function PF8Final() {
       gap: 4,
       flexShrink: 0
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDD10"), /*#__PURE__*/React.createElement("span", null, "Face ID \u4FDD\u8B77")))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "\uD83D\uDD10"), /*#__PURE__*/React.createElement("span", null, "Face ID \u4FDD\u8B77\uFF08\u958B\u767C\u4E2D\uFF09")))), /*#__PURE__*/React.createElement("div", {
     className: "pf8-cats",
     style: {
       padding: "0 16px 10px",
@@ -12550,6 +12692,8 @@ function PF10Final() {
         window.location.reload();
       }
     }
+    // 這些項目目前只是畫面上的列表，還沒接上真正的功能（沒有雲端同步、沒有真實的 Face ID 驗證等），先用 alert 講清楚
+    if (item.devInProgress) { alert(item.label.replace('（開發中）', '') + ' 功能開發中，敬請期待！'); }
   };
   const ledgers = [{
     id: 0,
@@ -12565,6 +12709,8 @@ function PF10Final() {
     icon: "✈️"
   }];
   const curLdg = ledgers[ledger];
+  // 注意：下面標 devInProgress:true 的項目，目前點下去還沒有真正的功能（例如沒有接雲端同步、沒有真的 Face ID 驗證），
+  // 先讓畫面上的文字標明「（開發中）」，並讓 onItemClick 跳出說明，避免使用者誤以為這些設定已經生效
   const sections = [{
     title: "帳本管理",
     items: [{
@@ -12573,15 +12719,17 @@ function PF10Final() {
       badge: curLdg.name
     }, {
       icon: "🔄",
-      label: "資料同步",
-      value: "已同步"
+      label: "資料同步（開發中）",
+      value: "本機儲存",
+      devInProgress: true
     }]
   }, {
     title: "介面設定",
     items: [{
       icon: "🎨",
-      label: "主題色彩",
-      value: "深濃藍"
+      label: "主題色彩（開發中）",
+      value: "深濃藍",
+      devInProgress: true
     }, {
       icon: "🌓",
       label: "深色模式",
@@ -12589,22 +12737,26 @@ function PF10Final() {
       on: true
     }, {
       icon: "🔤",
-      label: "字體大小",
-      value: "標準"
+      label: "字體大小（開發中）",
+      value: "標準",
+      devInProgress: true
     }]
   }, {
     title: "安全性",
     items: [{
       icon: "🔐",
-      label: "Touch ID / Face ID",
+      label: "Touch ID / Face ID（開發中）",
       toggle: true,
-      on: true
+      on: false,
+      devInProgress: true
     }, {
       icon: "🔢",
-      label: "設定密碼"
+      label: "設定密碼（開發中）",
+      devInProgress: true
     }, {
       icon: "📱",
-      label: "裝置管理"
+      label: "裝置管理（開發中）",
+      devInProgress: true
     }]
   }, {
     title: "資料",
@@ -12627,13 +12779,15 @@ function PF10Final() {
     items: [{
       icon: "ℹ️",
       label: "關於 amiba",
-      value: "v2.0"
+      value: "v3.18 · 2026-06-25"
     }, {
       icon: "📧",
-      label: "意見回饋"
+      label: "意見回饋（開發中）",
+      devInProgress: true
     }, {
       icon: "⭐",
-      label: "評分與評論"
+      label: "評分與評論（開發中）",
+      devInProgress: true
     }]
   }];
   const LDG_MENU = () => !ldgOpen ? null : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
@@ -16074,13 +16228,55 @@ Object.assign(window, {
   }
 })();
 
+// ── 支出大分類（用在 PF2/PF3 篩選列與類別管理）：使用者可以在類別管理畫面新增/改名，存在 localStorage: pf_exp_groups
+(function () {
+  const fallback = ['一般', '生活', '學習', '交通', '保險', '醫療', '投資', '其他'];
+  try {
+    const saved = JSON.parse(localStorage.getItem('pf_exp_groups') || 'null');
+    window.PF_EXP_GROUPS = (saved && saved.length) ? saved : fallback;
+  } catch {
+    window.PF_EXP_GROUPS = fallback;
+  }
+})();
+// 更新大分類清單：存檔＋更新全域變數＋廣播事件讓已經開著的畫面（PF2/PF3）重新讀取
+window.setExpGroups = function (list) {
+  window.PF_EXP_GROUPS = list;
+  try { localStorage.setItem('pf_exp_groups', JSON.stringify(list)); } catch (e) {}
+  window.dispatchEvent(new Event('pf-cats-updated'));
+};
+
+// 舊版小分類名稱 → 新大分類的對照（給沒有 group 欄位的舊資料用，補完後就不會再用到這張表）
+const PF_LEGACY_GROUP_MAP = {
+  '吃喝': '一般', '購物': '一般', '娛樂': '一般',
+  '帳單': '生活', '房租': '生活', '水電': '生活', '瓦斯': '生活', '稅金': '生活', '捐款': '生活',
+  '教育': '學習', '學費': '學習', '書籍': '學習', '課程': '學習',
+  '交通': '交通', '加油': '交通', '停車': '交通', '維修': '交通', '大眾': '交通',
+  '保險': '保險', '壽險': '保險', '車險': '保險', '產險': '保險', '意外': '保險',
+  '醫療': '醫療', '門診': '醫療', '藥品': '醫療', '牙科': '醫療', '健檢': '醫療',
+  '投資': '投資', '證券': '投資', '基金': '投資', '定存': '投資', '保單': '投資',
+  '信用卡': '其他', '人情': '其他', '紅包': '其他', '白包': '其他', '雜支': '其他', '其他': '其他'
+};
+
 // ── 共用分類（AddTxSheet 與 PF3 共用，可自行擴充）
 // 儲存於 localStorage: pf_categories_exp / pf_categories_inc
 window.getCategories = function (type) {
   const key = type === 'income' ? 'pf_categories_inc' : 'pf_categories_exp';
   try {
     const saved = JSON.parse(localStorage.getItem(key) || 'null');
-    if (saved && saved.length) return saved;
+    if (saved && saved.length) {
+      if (type === 'income') return saved;
+      // 舊資料可能沒有 group 欄位（PF3 大分類篩選要用）：補上之後存回去，之後就不用再補
+      let changed = false;
+      const migrated = saved.map(c => {
+        if (c.group) return c;
+        changed = true;
+        return Object.assign({}, c, { group: PF_LEGACY_GROUP_MAP[c.label] || '其他' });
+      });
+      if (changed) {
+        try { localStorage.setItem(key, JSON.stringify(migrated)); } catch (e) {}
+      }
+      return migrated;
+    }
   } catch {}
   // 預設分類
   if (type === 'income') {
@@ -16104,34 +16300,49 @@ window.getCategories = function (type) {
       label: '其他'
     }];
   }
-  return [{
-    emoji: '🍜',
-    label: '吃喝'
-  }, {
-    emoji: '🚇',
-    label: '交通'
-  }, {
-    emoji: '🛒',
-    label: '購物'
-  }, {
-    emoji: '🏠',
-    label: '帳單'
-  }, {
-    emoji: '🏥',
-    label: '醫療'
-  }, {
-    emoji: '🎬',
-    label: '娛樂'
-  }, {
-    emoji: '⛽',
-    label: '加油'
-  }, {
-    emoji: '💳',
-    label: '信用卡'
-  }, {
-    emoji: '🎁',
-    label: '其他'
-  }];
+  // 支出小分類預設值：每個都掛一個大分類（group），給 PF3 篩選列用
+  return [
+    { emoji: '🍜', label: '餐飲', group: '一般' },
+    { emoji: '🎬', label: '娛樂', group: '一般' },
+    { emoji: '🛍️', label: '購物', group: '一般' },
+    { emoji: '📺', label: '訂閱', group: '一般' },
+    { emoji: '🏠', label: '房租', group: '生活' },
+    { emoji: '💡', label: '水電', group: '生活' },
+    { emoji: '🔥', label: '瓦斯', group: '生活' },
+    { emoji: '🧾', label: '稅金', group: '生活' },
+    { emoji: '📄', label: '帳單', group: '生活' },
+    { emoji: '💝', label: '捐款', group: '生活' },
+    { emoji: '🎓', label: '學費', group: '學習' },
+    { emoji: '📚', label: '書籍', group: '學習' },
+    { emoji: '🧑‍🏫', label: '課程', group: '學習' },
+    { emoji: '🚇', label: '大眾', group: '交通' },
+    { emoji: '⛽', label: '加油', group: '交通' },
+    { emoji: '🅿️', label: '停車', group: '交通' },
+    { emoji: '🔧', label: '維修', group: '交通' },
+    { emoji: '🛡️', label: '壽險', group: '保險' },
+    { emoji: '🚗', label: '車險', group: '保險' },
+    { emoji: '🏭', label: '產險', group: '保險' },
+    { emoji: '⚠️', label: '意外', group: '保險' },
+    { emoji: '🏥', label: '門診', group: '醫療' },
+    { emoji: '💊', label: '藥品', group: '醫療' },
+    { emoji: '🦷', label: '牙科', group: '醫療' },
+    { emoji: '🩺', label: '健檢', group: '醫療' },
+    { emoji: '📈', label: '證券', group: '投資' },
+    { emoji: '💹', label: '基金', group: '投資' },
+    { emoji: '🏦', label: '定存', group: '投資' },
+    { emoji: '📑', label: '保單', group: '投資' },
+    { emoji: '🧧', label: '紅包', group: '其他' },
+    { emoji: '🤍', label: '白包', group: '其他' },
+    { emoji: '✨', label: '雜支', group: '其他' }
+  ];
+};
+
+// PF3 篩選用：依小分類名稱反查所屬大分類，找不到就歸「其他」
+window.getExpCatGroup = function (catLabel) {
+  const cats = window.getCategories('expense');
+  const found = cats.find(c => c.label === catLabel);
+  if (found && found.group) return found.group;
+  return PF_LEGACY_GROUP_MAP[catLabel] || '其他';
 };
 
 // ── 共用交易資料層（localStorage）
@@ -16179,9 +16390,7 @@ window.deleteTx = function (id) {
   return next;
 };
 
-// 乾淨版（GitHub Pages 上傳用）：關閉所有種子資料，避免覆蓋使用者真實資料
 window.PF_SEED_DISABLED = true;
-
 // ── 種子資料：pf_transactions（1–4 月各 20 筆，若 localStorage 為空自動填入）
 (function seedTransactions() {
   if (window.PF_SEED_DISABLED) return; // 乾淨版（上傳用）會設定這個旗標跳過種子資料
@@ -16328,19 +16537,27 @@ function CatManagerSheet({open, onClose, initType}) {
   const C = React.createElement;
   const [activeType, setActiveType] = React.useState('expense');
   const [cats, setCats] = React.useState([]);
+  // 大分類分頁篩選：支出類別才用得到，決定目前畫面上顯示哪一組小分類方塊
+  const [groupFilter, setGroupFilter] = React.useState('一般');
+  // 排序模式：開啟後方塊上會多出 ◀▶，點一下跟左右方塊交換位置（跟 PF1 快速連結方塊排序同一套邏輯）
+  const [sortMode, setSortMode] = React.useState(false);
+  // 大分類編輯模式：開啟後分頁標籤變成可改名的輸入框，下面多一個「新增大分類」輸入框
+  const [groupEditMode, setGroupEditMode] = React.useState(false);
+  const [newGroupName, setNewGroupName] = React.useState('');
   const [editId, setEditId] = React.useState(null);
   const [editEmoji, setEditEmoji] = React.useState('');
   const [editLabel, setEditLabel] = React.useState('');
   const [showAdd, setShowAdd] = React.useState(false);
   const [newEmoji, setNewEmoji] = React.useState('');
   const [newLabel, setNewLabel] = React.useState('');
-  const dragRef = React.useRef(null);
-  const listRef = React.useRef(null);
 
   React.useEffect(() => {
     if (open) {
       const t = initType || 'expense';
-      setActiveType(t); reload(t); setEditId(null); setShowAdd(false);
+      setActiveType(t); reload(t);
+      setGroupFilter((window.PF_EXP_GROUPS || ['其他'])[0] || '其他');
+      setEditId(null); setShowAdd(false); setSortMode(false);
+      setGroupEditMode(false); setNewGroupName('');
     }
   }, [open, initType]);
 
@@ -16355,7 +16572,12 @@ function CatManagerSheet({open, onClose, initType}) {
     window.dispatchEvent(new Event('pf-cats-updated'));
   };
 
-  const switchType = t => { setActiveType(t); reload(t); setEditId(null); setShowAdd(false); };
+  const switchType = t => {
+    setActiveType(t); reload(t);
+    setGroupFilter((window.PF_EXP_GROUPS || ['其他'])[0] || '其他');
+    setEditId(null); setShowAdd(false); setSortMode(false);
+    setGroupEditMode(false); setNewGroupName('');
+  };
 
   const txCounts = React.useMemo(() => {
     try {
@@ -16364,57 +16586,111 @@ function CatManagerSheet({open, onClose, initType}) {
     } catch { return {}; }
   }, [open, activeType]);
 
-  const delCat = id => { const nl = cats.filter(c => c.id !== id); setCats(nl); save(activeType, nl); };
-  const startEdit = c => { setEditId(c.id); setEditEmoji(c.emoji); setEditLabel(c.label); };
+  const delCat = id => { const nl = cats.filter(c => c.id !== id); setCats(nl); save(activeType, nl); setEditId(null); };
+  const startEdit = c => { setEditId(c.id); setEditEmoji(c.emoji); setEditLabel(c.label); setShowAdd(false); };
   const commitEdit = () => {
-    const nl = cats.map(c => c.id === editId ? Object.assign({}, c, {emoji: editEmoji, label: editLabel}) : c);
+    if (!editLabel.trim()) { alert('請先輸入分類名稱'); return; }
+    const nl = cats.map(c => c.id === editId ? Object.assign({}, c, {emoji: editEmoji.trim() || c.emoji, label: editLabel.trim()}) : c);
     setCats(nl); save(activeType, nl); setEditId(null);
   };
   const addCatNew = () => {
-    if (!newEmoji || !newLabel.trim()) return;
-    const nl = cats.concat([{id: String(Date.now()), emoji: newEmoji, label: newLabel.trim()}]);
+    // 原本的 bug：emoji 欄位沒填時 newEmoji 會是空字串，這裡會直接 return，
+    // 畫面上什麼提示都沒有，使用者只會覺得「按了+沒反應」。
+    // 修正：名稱沒填才提示並擋下；emoji 沒填就用輸入框的預設圖示 📦 補上，不再讓使用者卡住。
+    if (!newLabel.trim()) { alert('請先輸入分類名稱'); return; }
+    const emoji = newEmoji.trim() || '📦';
+    // 支出類別要多存一個 group（大分類）：直接用目前選中的大分類分頁，使用者在哪一頁按新增就加進哪一頁，比預設「其他」更直覺
+    const newCat = {id: String(Date.now()), emoji: emoji, label: newLabel.trim()};
+    if (activeType === 'expense') newCat.group = groupFilter || '其他';
+    const nl = cats.concat([newCat]);
     setCats(nl); save(activeType, nl); setNewEmoji(''); setNewLabel(''); setShowAdd(false);
+  };
+  // 點一下大分類標籤就換下一個（一般→生活→學習→交通→保險→醫療→投資→其他→一般...），只有支出類別有這個欄位
+  const cycleGroup = id => {
+    const groups = window.PF_EXP_GROUPS || ['其他'];
+    const nl = cats.map(c => {
+      if (c.id !== id) return c;
+      const curIdx = groups.indexOf(c.group);
+      const nextGroup = groups[(curIdx + 1) % groups.length];
+      return Object.assign({}, c, {group: nextGroup});
+    });
+    setCats(nl); save(activeType, nl);
   };
   const resetDefault = () => {
     localStorage.removeItem(activeType === 'income' ? 'pf_categories_inc' : 'pf_categories_exp');
     reload(activeType); window.dispatchEvent(new Event('pf-cats-updated'));
   };
 
-  // Touch drag reorder
-  const onListTouchMove = e => {
-    if (!dragRef.current) return;
-    const y = e.touches[0].clientY;
-    const children = listRef.current ? Array.from(listRef.current.children) : [];
-    let over = dragRef.current.idx;
-    children.forEach((el, i) => {
-      const r = el.getBoundingClientRect();
-      if (y >= r.top && y < r.bottom) over = i;
-    });
-    if (over !== dragRef.current.overIdx) { dragRef.current.overIdx = over; setCats(function(c){return c.slice();}); }
+  // 目前畫面上看得到的小分類方塊：支出會先依大分類分頁篩選過，收入沒有大分類，直接全部顯示
+  const visibleCats = activeType === 'expense' ? cats.filter(c => (c.group || '其他') === groupFilter) : cats;
+
+  // 排序：在目前篩選出來的小分類範圍內，跟左邊／右邊的方塊交換位置（直接操作底層 cats 陣列裡對應的兩個項目）
+  const moveCat = (id, dir) => {
+    const vIdx = visibleCats.findIndex(c => c.id === id);
+    const tIdx = vIdx + dir;
+    if (vIdx < 0 || tIdx < 0 || tIdx >= visibleCats.length) return;
+    const a = visibleCats[vIdx], b = visibleCats[tIdx];
+    const ai = cats.findIndex(c => c.id === a.id);
+    const bi = cats.findIndex(c => c.id === b.id);
+    const nl = cats.slice();
+    const tmp = nl[ai]; nl[ai] = nl[bi]; nl[bi] = tmp;
+    setCats(nl); save(activeType, nl);
   };
-  const onListTouchEnd = () => {
-    if (!dragRef.current) return;
-    const startIdx = dragRef.current.idx;
-    const endIdx = dragRef.current.overIdx !== undefined ? dragRef.current.overIdx : startIdx;
-    dragRef.current = null;
-    if (endIdx !== startIdx) {
-      const nl = cats.slice();
-      const moved = nl.splice(startIdx, 1)[0];
-      nl.splice(endIdx, 0, moved);
-      setCats(nl); save(activeType, nl);
-    }
+
+  // 大分類改名：分頁標籤上直接編輯文字，連同這個大分類底下所有小分類的 group 欄位一起改名，避免改名後小分類「失聯」
+  const renameGroup = (oldName, newName) => {
+    const nn = newName.trim();
+    if (!nn || nn === oldName) return;
+    const groups = window.PF_EXP_GROUPS || [];
+    if (groups.includes(nn)) { alert('已經有「' + nn + '」這個大分類了'); return; }
+    window.setExpGroups(groups.map(g => g === oldName ? nn : g));
+    const nl = cats.map(c => c.group === oldName ? Object.assign({}, c, {group: nn}) : c);
+    setCats(nl); save('expense', nl);
+    if (groupFilter === oldName) setGroupFilter(nn);
+  };
+  // 新增大分類：先加進分頁列，新增的小分類預設就會掛在這裡（addCatNew 用 groupFilter 當預設值）
+  const addGroup = name => {
+    const nn = name.trim();
+    if (!nn) { alert('請先輸入大分類名稱'); return; }
+    const groups = window.PF_EXP_GROUPS || [];
+    if (groups.includes(nn)) { alert('已經有「' + nn + '」這個大分類了'); return; }
+    window.setExpGroups(groups.concat([nn]));
+    setGroupFilter(nn); setNewGroupName('');
+  };
+  // 刪除大分類：底下的小分類自動歸到「其他」，所以「其他」本身不能刪（要保留歸屬目的地），且至少要留一個大分類
+  const deleteGroup = name => {
+    const groups = window.PF_EXP_GROUPS || [];
+    if (name === '其他') { alert('「其他」是預設的歸屬分類，不能刪除'); return; }
+    if (groups.length <= 1) { alert('至少要保留一個大分類'); return; }
+    const fallbackGroup = groups.includes('其他') ? '其他' : (groups.find(g => g !== name) || '其他');
+    const affected = cats.filter(c => c.group === name).length;
+    const msg = affected > 0
+      ? '刪除「' + name + '」後，底下 ' + affected + ' 個小分類會自動歸到「' + fallbackGroup + '」，確定要刪除嗎？'
+      : '確定要刪除「' + name + '」這個大分類嗎？';
+    if (!confirm(msg)) return;
+    window.setExpGroups(groups.filter(g => g !== name));
+    const nl = cats.map(c => c.group === name ? Object.assign({}, c, {group: fallbackGroup}) : c);
+    setCats(nl); save('expense', nl);
+    if (groupFilter === name) setGroupFilter(fallbackGroup);
   };
 
   if (!open) return null;
 
-  const RB = '.5px solid rgba(255,255,255,.07)';
   const inpBase = {background:'rgba(255,255,255,.08)',border:'.5px solid rgba(255,255,255,.14)',color:'var(--fg)',outline:'none',fontFamily:'var(--font-zh)'};
+  const editingCat = editId ? cats.find(c => c.id === editId) : null;
 
-  return C('div', {style:{position:'fixed',inset:0,zIndex:400,background:'var(--bg)',display:'flex',flexDirection:'column',animation:'pf1-slideup .25s ease'}},
+  // 注意：onClick 要擋住 stopPropagation，因為這個畫面是疊在「新增記帳」Sheet 上面的，
+  // 而「新增記帳」Sheet 的最外層背景有 onClick:onClose（點背景關閉）。
+  // 沒有這行的話，點這個畫面裡任何東西（例如收入/支出切換）事件會往上傳，誤觸背景的關閉。
+  return C('div', {onClick:function(e){e.stopPropagation();}, style:{position:'fixed',inset:0,zIndex:400,background:'var(--bg)',display:'flex',flexDirection:'column',animation:'pf1-slideup .25s ease'}},
     /* ── 頂欄 */
     C('div', {style:{display:'flex',alignItems:'center',gap:12,padding:'52px 20px 10px'}},
       C('div', {onClick:onClose, style:{width:36,height:36,borderRadius:18,background:'rgba(255,255,255,.1)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:18,color:'var(--fg)'}}, '←'),
-      C('div', {style:{flex:1,fontFamily:'var(--font-zh)',fontSize:17,fontWeight:700,color:'var(--fg)'}}, '交易類型')
+      C('div', {style:{flex:1,fontFamily:'var(--font-zh)',fontSize:17,fontWeight:700,color:'var(--fg)'}}, '類別管理'),
+      /* 排序模式開關 */
+      C('div', {onClick:function(){setSortMode(function(s){return !s;});setEditId(null);setShowAdd(false);},
+        style:{padding:'7px 14px',borderRadius:16,background:sortMode?'rgba(59,130,246,.22)':'rgba(255,255,255,.1)',border:'.5px solid '+(sortMode?'var(--acc)':'transparent'),fontFamily:'var(--font-zh)',fontSize:13,fontWeight:600,color:sortMode?'var(--acc)':'var(--fg-3)',cursor:'pointer',whiteSpace:'nowrap'}
+      }, sortMode ? '完成排序' : '排序')
     ),
     /* ── 重置按鈕 */
     C('div', {style:{padding:'4px 16px 10px'}},
@@ -16427,65 +16703,117 @@ function CatManagerSheet({open, onClose, initType}) {
         C('div', {onClick:function(){switchType('income');}, style:{padding:'9px 32px',borderRadius:20,fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,cursor:'pointer',transition:'all .18s',background:activeType==='income'?'rgba(52,216,130,.85)':'transparent',color:activeType==='income'?'#fff':'var(--fg-3)'}}, '收入')
       )
     ),
-    C('div', {style:{height:'.5px',background:'var(--border)',margin:'0 16px'}}),
-    /* ── 類別列表 */
-    C('div', {ref:listRef, onTouchMove:onListTouchMove, onTouchEnd:onListTouchEnd, style:{flex:1,overflowY:'auto',padding:'0 16px 8px'}},
-      cats.map(function(c, i) {
-        const count = txCounts[c.emoji] || 0;
-        const isDrag = dragRef.current && dragRef.current.idx === i;
-        const isDrop = dragRef.current && dragRef.current.overIdx === i && dragRef.current.idx !== i;
-
-        /* 編輯列 */
-        if (editId === c.id) return C('div', {key:c.id, style:{display:'flex',alignItems:'center',gap:8,padding:'10px 0',borderBottom:RB}},
+    /* ── 大分類分頁（只有支出才有，用來區分小分類方塊要顯示哪一組）：可以新增，也可以點「✏️」進編輯模式改名 */
+    activeType === 'expense' ? C('div', {style:{padding:'0 16px 12px'}},
+      C('div', {style:{display:'flex',gap:6,overflowX:'auto',marginBottom:groupEditMode?8:0}},
+        (window.PF_EXP_GROUPS || []).map(g => groupEditMode ? C('div', {key:g, style:{display:'flex',alignItems:'center',gap:3,flexShrink:0}},
+          C('input', {defaultValue:g,
+            onBlur:function(e){renameGroup(g, e.target.value);},
+            onKeyDown:function(e){if(e.key==='Enter'){e.target.blur();}},
+            style:{width:56,padding:'7px 4px',borderRadius:999,fontFamily:'var(--font-zh)',fontSize:12,fontWeight:500,textAlign:'center',
+              background:'rgba(59,130,246,.1)',border:'.5px solid var(--acc)',color:'var(--acc)',outline:'none'}
+          }),
+          /* 「其他」是預設歸屬目的地，不能刪，所以不顯示刪除鈕 */
+          g !== '其他' ? C('div', {onClick:function(){deleteGroup(g);},
+            style:{width:20,height:20,borderRadius:10,background:'rgba(255,95,87,.18)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#FF5F57',cursor:'pointer',flexShrink:0}
+          }, '✕') : null
+        ) : C('div', {
+          key:g, onClick:function(){setGroupFilter(g);setEditId(null);setShowAdd(false);},
+          style:{padding:'7px 14px',borderRadius:999,cursor:'pointer',flexShrink:0,fontFamily:'var(--font-zh)',fontSize:12,fontWeight:500,
+            background:groupFilter===g?'rgba(59,130,246,.18)':'rgba(255,255,255,.06)',
+            color:groupFilter===g?'var(--acc)':'var(--fg-3)',
+            border:'.5px solid '+(groupFilter===g?'var(--acc)':'var(--border)')}
+        }, g)),
+        /* 大分類編輯模式開關 */
+        C('div', {onClick:function(){setGroupEditMode(function(s){return !s;});setNewGroupName('');},
+          style:{padding:'7px 12px',borderRadius:999,flexShrink:0,cursor:'pointer',fontSize:12,fontFamily:'var(--font-zh)',fontWeight:600,
+            background:groupEditMode?'rgba(59,130,246,.22)':'rgba(255,255,255,.06)',
+            color:groupEditMode?'var(--acc)':'var(--fg-4)',
+            border:'.5px solid '+(groupEditMode?'var(--acc)':'var(--border)')}
+        }, groupEditMode ? '完成' : '✏️')
+      ),
+      /* 新增大分類輸入框：只有編輯模式才顯示 */
+      groupEditMode ? C('div', {style:{display:'flex',gap:6}},
+        C('input', {value:newGroupName, onChange:function(e){setNewGroupName(e.target.value);}, placeholder:'新增大分類名稱',
+          style:Object.assign({},inpBase,{flex:1,height:36,borderRadius:18,padding:'0 12px',fontSize:12})}),
+        C('div', {onClick:function(){addGroup(newGroupName);},
+          style:{padding:'7px 16px',borderRadius:18,background:'var(--acc)',color:'#fff',fontSize:12,fontWeight:600,fontFamily:'var(--font-zh)',cursor:'pointer',whiteSpace:'nowrap'}
+        }, '新增')
+      ) : null
+    ) : null,
+    C('div', {style:{height:'.5px',background:'var(--border)',margin:'0 16px 4px'}}),
+    /* ── 小分類方塊網格 */
+    C('div', {style:{flex:1,overflowY:'auto',padding:'14px 16px 8px'}},
+      C('div', {style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10}},
+        visibleCats.map(function(c, i) {
+          const count = txCounts[c.emoji] || 0;
+          const isEditingThis = editId === c.id;
+          return C('div', {
+            key:c.id,
+            onClick: (!sortMode && !isEditingThis) ? function(){startEdit(c);} : undefined,
+            style:{position:'relative',padding:'12px 4px 10px',borderRadius:14,cursor:sortMode?'default':'pointer',
+              background:isEditingThis?'rgba(59,130,246,.16)':'rgba(255,255,255,.06)',
+              border:'1.5px solid '+(isEditingThis?'var(--acc)':'transparent'),
+              display:'flex',flexDirection:'column',alignItems:'center',gap:4,transition:'all .15s'}
+          },
+            C('span', {style:{fontSize:24,lineHeight:1}}, c.emoji),
+            C('span', {style:{fontSize:11,fontWeight:600,fontFamily:'var(--font-zh)',color:'var(--fg)',textAlign:'center',width:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}, c.label),
+            count > 0 ? C('span', {style:{fontSize:9,color:'var(--fg-4)'}}, String(count) + ' 筆') : null,
+            /* 排序模式：方塊下方出現 ◀▶，點一下跟左邊／右邊的方塊交換位置 */
+            sortMode ? C('div', {style:{display:'flex',gap:6,marginTop:2}},
+              C('div', {onClick:function(e){e.stopPropagation();moveCat(c.id,-1);},
+                style:{width:22,height:22,borderRadius:6,background:'rgba(255,255,255,.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:i===0?'var(--fg-4)':'var(--fg)',cursor:i===0?'default':'pointer',opacity:i===0?0.35:1}
+              }, '◀'),
+              C('div', {onClick:function(e){e.stopPropagation();moveCat(c.id,1);},
+                style:{width:22,height:22,borderRadius:6,background:'rgba(255,255,255,.12)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:i===visibleCats.length-1?'var(--fg-4)':'var(--fg)',cursor:i===visibleCats.length-1?'default':'pointer',opacity:i===visibleCats.length-1?0.35:1}
+              }, '▶')
+            ) : null
+          );
+        }),
+        /* 新增方塊（排序模式中先隱藏，避免誤觸） */
+        !sortMode ? C('div', {
+          onClick:function(){setShowAdd(function(s){return !s;});setEditId(null);setNewEmoji('');setNewLabel('');},
+          style:{padding:'12px 4px 10px',borderRadius:14,cursor:'pointer',background:showAdd?'rgba(59,130,246,.12)':'rgba(255,255,255,.03)',border:'1.5px dashed '+(showAdd?'var(--acc)':'var(--border)'),display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4,minHeight:62}
+        },
+          C('span', {style:{fontSize:20,color:'var(--acc)'}}, '＋'),
+          C('span', {style:{fontSize:10,fontFamily:'var(--font-zh)',color:'var(--acc)',fontWeight:600}}, '新增')
+        ) : null
+      ),
+      visibleCats.length === 0 && !showAdd ? C('div', {style:{textAlign:'center',padding:'30px 0',fontFamily:'var(--font-zh)',fontSize:13,color:'var(--fg-4)'}}, '這個分類目前沒有小分類，點「＋新增」加一個吧') : null,
+      /* ── 編輯面板：點方塊後在下方展開，可改 emoji／名稱／所屬大分類，或刪除 */
+      editingCat ? C('div', {style:{marginTop:16,padding:14,borderRadius:14,background:'rgba(255,255,255,.05)',border:'.5px solid var(--border)'}},
+        C('div', {style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
           C('input', {value:editEmoji, onChange:function(e){setEditEmoji(e.target.value);}, maxLength:2,
             style:Object.assign({},inpBase,{width:46,height:46,borderRadius:12,fontSize:22,textAlign:'center'})}),
           C('input', {value:editLabel, onChange:function(e){setEditLabel(e.target.value);}, autoFocus:true,
-            style:Object.assign({},inpBase,{flex:1,height:46,borderRadius:12,padding:'0 12px',fontSize:15})}),
-          C('div', {onClick:commitEdit, style:{padding:'8px 14px',borderRadius:10,background:'var(--acc)',color:'#fff',fontSize:13,fontFamily:'var(--font-zh)',fontWeight:600,cursor:'pointer',whiteSpace:'nowrap'}}, '儲存'),
-          C('div', {onClick:function(){setEditId(null);}, style:{padding:'8px 10px',borderRadius:10,background:'rgba(255,255,255,.08)',color:'var(--fg-3)',fontSize:14,cursor:'pointer'}}, '✕')
-        );
-
-        /* 一般列 */
-        return C('div', {key:c.id, style:{display:'flex',alignItems:'center',gap:12,padding:'13px 0',borderBottom:RB,opacity:isDrag?0.35:1,background:isDrop?'rgba(59,130,246,.07)':'transparent',transition:'background .15s'}},
-          /* 刪除圓鈕 */
-          C('div', {onClick:function(){delCat(c.id);}, style:{width:24,height:24,borderRadius:12,background:'#FF3B30',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}},
-            C('span', {style:{color:'#fff',fontSize:18,fontWeight:300,lineHeight:'23px'}}, '−')
-          ),
-          /* Emoji */
-          C('span', {style:{fontSize:24,flexShrink:0,lineHeight:1}}, c.emoji),
-          /* 名稱 + 使用次數 */
-          C('div', {style:{flex:1,display:'flex',alignItems:'center',gap:7}},
-            C('span', {style:{fontFamily:'var(--font-zh)',fontSize:15,fontWeight:500,color:'var(--fg)'}}, c.label),
-            count > 0 ? C('span', {style:{fontSize:12,color:'var(--fg-4)'}}, String(count)) : null
-          ),
-          /* 編輯鈕 */
-          C('div', {onClick:function(){startEdit(c);}, style:{width:34,height:34,borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:15}}, '✏️'),
-          /* 拖曳把手 */
-          C('div', {
-            onTouchStart:function(e){e.stopPropagation();dragRef.current={idx:i,overIdx:i};},
-            style:{width:34,height:34,borderRadius:10,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'grab',gap:3.5,touchAction:'none',flexShrink:0}
-          },
-            C('div',{style:{width:17,height:1.5,background:'var(--fg-4)',borderRadius:1}}),
-            C('div',{style:{width:17,height:1.5,background:'var(--fg-4)',borderRadius:1}}),
-            C('div',{style:{width:17,height:1.5,background:'var(--fg-4)',borderRadius:1}})
-          )
-        );
-      }),
-      /* 新增列 */
-      showAdd ? C('div', {style:{display:'flex',alignItems:'center',gap:10,padding:'14px 0',borderTop:'.5px solid var(--border)',marginTop:4}},
-        C('input', {value:newEmoji, onChange:function(e){setNewEmoji(e.target.value);}, placeholder:'📦', maxLength:2,
-          style:Object.assign({},inpBase,{width:50,height:50,borderRadius:12,fontSize:24,textAlign:'center'})}),
-        C('input', {value:newLabel, onChange:function(e){setNewLabel(e.target.value);}, placeholder:'分類名稱', autoFocus:true,
-          style:Object.assign({},inpBase,{flex:1,height:50,borderRadius:12,padding:'0 14px',fontSize:15})}),
-        C('div', {onClick:addCatNew, style:{width:50,height:50,borderRadius:12,background:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,color:'#fff',cursor:'pointer'}}, '+')
+            style:Object.assign({},inpBase,{flex:1,height:46,borderRadius:12,padding:'0 12px',fontSize:15})})
+        ),
+        /* 大分類標籤：點一下可循環切換 8 個大分類，只有支出類別才有 */
+        activeType === 'expense' ? C('div', {style:{marginBottom:10,display:'flex',alignItems:'center'}},
+          C('span', {style:{fontSize:11,fontFamily:'var(--font-zh)',color:'var(--fg-4)',marginRight:8}}, '所屬大分類：'),
+          C('span', {onClick:function(){cycleGroup(editingCat.id);}, style:{padding:'5px 12px',borderRadius:999,background:'rgba(255,255,255,.08)',border:'.5px solid var(--border)',fontFamily:'var(--font-zh)',fontSize:12,fontWeight:500,color:'var(--acc)',cursor:'pointer'}}, editingCat.group || '其他'),
+          C('span', {style:{fontSize:10,color:'var(--fg-4)',marginLeft:8}}, '點一下換下一個')
+        ) : null,
+        C('div', {style:{display:'flex',gap:8}},
+          C('div', {onClick:function(){delCat(editId);}, style:{width:46,height:42,borderRadius:11,background:'rgba(255,95,87,.15)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17,cursor:'pointer'}}, '🗑'),
+          C('div', {onClick:function(){setEditId(null);}, style:{flex:1,height:42,borderRadius:11,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,color:'var(--fg-3)',cursor:'pointer'}}, '取消'),
+          C('div', {onClick:commitEdit, style:{flex:1,height:42,borderRadius:11,background:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:700,color:'#fff',cursor:'pointer'}}, '儲存')
+        )
+      ) : null,
+      /* ── 新增面板：點「＋新增」方塊後在下方展開 */
+      showAdd ? C('div', {style:{marginTop:16,padding:14,borderRadius:14,background:'rgba(255,255,255,.05)',border:'.5px solid var(--border)'}},
+        C('div', {style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
+          C('input', {value:newEmoji, onChange:function(e){setNewEmoji(e.target.value);}, placeholder:'📦', maxLength:2,
+            style:Object.assign({},inpBase,{width:46,height:46,borderRadius:12,fontSize:22,textAlign:'center'})}),
+          C('input', {value:newLabel, onChange:function(e){setNewLabel(e.target.value);}, placeholder:'分類名稱', autoFocus:true,
+            style:Object.assign({},inpBase,{flex:1,height:46,borderRadius:12,padding:'0 12px',fontSize:15})})
+        ),
+        activeType === 'expense' ? C('div', {style:{marginBottom:10,fontSize:11,fontFamily:'var(--font-zh)',color:'var(--fg-4)'}}, '將加入「'+groupFilter+'」大分類（之後可在方塊上點一下調整）') : null,
+        C('div', {style:{display:'flex',gap:8}},
+          C('div', {onClick:function(){setShowAdd(false);setNewEmoji('');setNewLabel('');}, style:{flex:1,height:42,borderRadius:11,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,color:'var(--fg-3)',cursor:'pointer'}}, '取消'),
+          C('div', {onClick:addCatNew, style:{flex:1,height:42,borderRadius:11,background:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:700,color:'#fff',cursor:'pointer'}}, '新增')
+        )
       ) : null
-    ),
-    /* ── 底部「添加」bar */
-    C('div', {style:{padding:'12px 16px 32px',borderTop:'.5px solid var(--border)'}},
-      C('div', {onClick:function(){setShowAdd(function(s){return !s;});setNewEmoji('');setNewLabel('');},
-        style:{height:52,borderRadius:26,background:showAdd?'rgba(255,255,255,.1)':'rgba(255,255,255,.14)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:16,fontWeight:600,color:'var(--fg)',cursor:'pointer'}},
-        showAdd ? '取消' : '添加'
-      )
     )
   );
 }
@@ -16501,6 +16829,7 @@ function AddTxSheet({
   const [type, setType] = React.useState(defaultType || 'expense');
   const [amount, setAmount] = React.useState(defaultAmount ? String(Math.abs(Math.round(defaultAmount))) : '');
   const [catId, setCatId] = React.useState(''); // 選中的分類 id
+  const [catGroupFilter, setCatGroupFilter] = React.useState('全部'); // 大分類篩選（只有支出才用得到，幫忙從一堆小分類裡先縮小範圍）
   const [note, setNote] = React.useState('');
   const [acc, setAcc] = React.useState(defaultAcc || '');
   const [fromAcc, setFromAcc] = React.useState('');
@@ -16510,6 +16839,10 @@ function AddTxSheet({
   const [showCalc, setShowCalc] = React.useState(false);
   const [showNote, setShowNote] = React.useState(false);
   const [showCatMgr, setShowCatMgr] = React.useState(false); // 分類管理
+  // 設定提醒：直接選日期+時間，存檔時寫入 pf_reminders 並用 sourceId 串聯這筆交易
+  const [remindOn, setRemindOn] = React.useState(false);
+  const [remindDate, setRemindDate] = React.useState('');
+  const [remindTime, setRemindTime] = React.useState('09:00');
   const [txDate, setTxDate] = React.useState('');
   // 幣別與手動匯率（轉帳一律視為台幣，不顯示幣別選擇）
   const [currency, setCurrency] = React.useState('TWD');
@@ -16533,6 +16866,8 @@ function AddTxSheet({
         const catList = window.getCategories ? window.getCategories(t) : [];
         const matched = catList.find(c => c.label === editTx.catName);
         setCatId(matched ? matched.id : '');
+        // 大分類篩選跟著這筆原本的分類走，沒對到（例如舊資料、分類被刪）就用第一個大分類
+        setCatGroupFilter(t === 'expense' ? (matched && matched.group ? matched.group : ((window.PF_EXP_GROUPS || [])[0] || '其他')) : '');
         setNote(editTx.note || '');
         setPhoto(null);
         // amountOrig 是原始輸入幣別的金額（非台幣交易才有），沒有就用台幣金額本身
@@ -16549,10 +16884,35 @@ function AddTxSheet({
         setAcc(editTx.acc || first);
         setFromAcc(first);
         setToAcc(second);
+        // 編輯模式：檢查這筆交易是否已經串聯一個提醒（pf_reminders 裡 sourceId 對到這筆交易 id），有就帶出來顯示
+        try {
+          const remList = JSON.parse(localStorage.getItem('pf_reminders') || '[]');
+          const linked = remList.find(r => r.sourceId === editTx.id);
+          if (linked) {
+            setRemindOn(true);
+            setRemindDate(linked.date || '');
+            setRemindTime(linked.time || '09:00');
+          } else {
+            setRemindOn(false);
+            setRemindDate('');
+            setRemindTime('09:00');
+          }
+        } catch {
+          setRemindOn(false);
+        }
       } else {
         const t = defaultType || 'expense';
         setType(t);
-        setCatId('');
+        if (t === 'expense') {
+          // 沒有「全部」選項了，預設先選第一個大分類，並自動帶出該大分類底下第一個小分類
+          const grp = (window.PF_EXP_GROUPS || [])[0] || '其他';
+          const firstCat = (window.getCategories ? window.getCategories('expense') : []).find(c => (c.group || '其他') === grp);
+          setCatGroupFilter(grp);
+          setCatId(firstCat ? (firstCat.id || firstCat.label) : '');
+        } else {
+          setCatGroupFilter('');
+          setCatId('');
+        }
         setNote('');
         setPhoto(null);
         setAmount(defaultAmount ? String(Math.abs(Math.round(defaultAmount))) : '');
@@ -16568,6 +16928,9 @@ function AddTxSheet({
         setAcc(defaultAcc || first);
         setFromAcc(first);
         setToAcc(second);
+        setRemindOn(false);
+        setRemindDate('');
+        setRemindTime('09:00');
       }
     }
   }, [open, editTx]);
@@ -16604,6 +16967,34 @@ function AddTxSheet({
       shadow: 'rgba(59,130,246,.35)'
     }
   }[type];
+  // 把這筆交易的提醒狀態同步進 pf_reminders（勾選=新增或更新；取消勾選=刪除舊的）
+  // txId：這筆交易的 id；txTitle：提醒標題要用的名稱（分類名稱或備註）
+  const syncReminder = (txId, txTitle) => {
+    try {
+      const list = JSON.parse(localStorage.getItem('pf_reminders') || '[]');
+      const idx = list.findIndex(r => r.sourceId === txId);
+      if (remindOn) {
+        const r = {
+          id: idx >= 0 ? list[idx].id : 'rem' + Date.now(),
+          title: (txTitle || '記帳') + ' 提醒',
+          date: remindDate || txDate || todayStr(),
+          time: remindTime || '09:00',
+          type: '記帳',
+          status: idx >= 0 ? list[idx].status : '待處理',
+          repeat: idx >= 0 ? list[idx].repeat : '不重複',
+          notes: note.trim() || '',
+          sourceId: txId,
+          ledger: window.__pfLedger || 0
+        };
+        if (idx >= 0) list[idx] = r; else list.unshift(r);
+        localStorage.setItem('pf_reminders', JSON.stringify(list));
+      } else if (idx >= 0) {
+        // 之前有勾，現在取消了 → 把舊的提醒移除，避免留下沒人管的孤兒提醒
+        list.splice(idx, 1);
+        localStorage.setItem('pf_reminders', JSON.stringify(list));
+      }
+    } catch {}
+  };
   const handleSubmit = () => {
     const amt = parseFloat(amount.replace(/,/g, ''));
     if (!amt || amt <= 0) return;
@@ -16628,6 +17019,7 @@ function AddTxSheet({
         time: editTx.time || timeStr,
         date: dateStr
       });
+      syncReminder(editTx.id, safeCat?.label);
       onClose();
       return;
     }
@@ -16639,7 +17031,7 @@ function AddTxSheet({
         time: timeStr,
         date: dateStr
       };
-      window.saveTx({
+      const txExp = window.saveTx({
         ...shared,
         type: 'expense',
         amount: amt,
@@ -16651,10 +17043,12 @@ function AddTxSheet({
         amount: amt,
         acc: toAcc || acctList[1] || ''
       });
+      // 轉帳會拆成兩筆交易，提醒統一串在「轉出」這一筆上
+      syncReminder(txExp.id, '轉帳');
     } else {
       // 非台幣：amount 改存換算後的台幣金額，原始輸入金額存在 amountOrig（給日後編輯用）
       const amtTWD = window.pfToTWD(amt, currency, fxRate);
-      window.saveTx({
+      const savedTx = window.saveTx({
         type,
         amount: amtTWD,
         amountOrig: amt,
@@ -16667,6 +17061,7 @@ function AddTxSheet({
         time: timeStr,
         date: dateStr
       });
+      syncReminder(savedTx.id, safeCat?.label);
     }
     // 納入資產：確認後導航到 PF6（資產管理，tab=5）
     if (includeAsset && !isTransfer) {
@@ -16686,6 +17081,12 @@ function AddTxSheet({
     if (!editTx) return;
     if (window.confirm('確定要刪除這筆交易嗎？此操作無法復原。')) {
       window.deleteTx(editTx.id);
+      // 連同刪除這筆交易串聯的提醒，避免留下孤兒提醒
+      try {
+        const list = JSON.parse(localStorage.getItem('pf_reminders') || '[]');
+        const next = list.filter(r => r.sourceId !== editTx.id);
+        if (next.length !== list.length) localStorage.setItem('pf_reminders', JSON.stringify(next));
+      } catch {}
       onClose();
     }
   };
@@ -16815,7 +17216,15 @@ function AddTxSheet({
       key: v,
       onClick: () => {
         setType(v);
-        setCatId('');
+        if (v === 'expense') {
+          const grp = (window.PF_EXP_GROUPS || [])[0] || '其他';
+          const firstCat = (window.getCategories ? window.getCategories('expense') : []).find(c => (c.group || '其他') === grp);
+          setCatGroupFilter(grp);
+          setCatId(firstCat ? (firstCat.id || firstCat.label) : '');
+        } else {
+          setCatGroupFilter('');
+          setCatId('');
+        }
       },
       style: {
         minWidth: 50,
@@ -16849,6 +17258,8 @@ function AddTxSheet({
     }
   }, [['📷', '智能辨識'], ['🎙️', '語音輸入']].map(([icon, lbl]) => /*#__PURE__*/React.createElement("div", {
     key: lbl,
+    // 這兩個功能還沒接 AI 辨識/語音引擎，先標「(開發中)」並用 alert 說明，避免使用者點了卻沒反應、以為是壞掉了
+    onClick: () => alert(lbl + ' 功能開發中，敬請期待！目前請直接手動輸入金額與分類。'),
     style: {
       flex: 1,
       background: 'rgba(255,255,255,.08)',
@@ -16858,7 +17269,8 @@ function AddTxSheet({
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      gap: 3
+      gap: 3,
+      opacity: .55
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
@@ -16871,7 +17283,7 @@ function AddTxSheet({
       fontWeight: 600,
       color: 'var(--fg-2)'
     }
-  }, lbl)))), /*#__PURE__*/React.createElement("div", {
+  }, lbl + '（開發中）')))), /*#__PURE__*/React.createElement("div", {
     onClick: () => {
       setCalcDisplay(amount || '');
       setCalcEq('');
@@ -16939,21 +17351,46 @@ function AddTxSheet({
   }, "\u9078\u64C7\u5206\u985E"), /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowCatMgr(true),
     style: {
-      fontSize: 11,
+      fontSize: 15,
       color: 'var(--acc)',
-      fontFamily: 'var(--font-zh)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 3,
-      cursor: 'pointer'
+      cursor: 'pointer',
+      padding: '2px 4px'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "\u270F\uFE0F"), /*#__PURE__*/React.createElement("span", null, "\u7DE8\u8F2F\u5206\u985E"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u2699\uFE0F")), type === 'expense' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      overflowX: 'auto',
+      scrollbarWidth: 'none',
+      marginBottom: 8
+    }
+  }, (window.PF_EXP_GROUPS || []).map(g => /*#__PURE__*/React.createElement("div", {
+    key: g,
+    onClick: () => {
+      setCatGroupFilter(g);
+      // \u63DB\u5927\u5206\u985E\u5F8C\uFF0C\u81EA\u52D5\u5E36\u51FA\u8A72\u5927\u5206\u985E\u5E95\u4E0B\u7B2C\u4E00\u500B\u5C0F\u5206\u985E\uFF0C\u907F\u514D\u756B\u9762\u4E0A\u300C\u9078\u4E2D\u300D\u7684\u683C\u5B50\u548C\u5BE6\u969B\u8981\u5B58\u7684\u5206\u985E\u4E0D\u4E00\u81F4
+      const firstCat = cats.find(c => (c.group || '\u5176\u4ED6') === g);
+      setCatId(firstCat ? (firstCat.id || firstCat.label) : '');
+    },
+    style: {
+      padding: '5px 12px',
+      borderRadius: 999,
+      cursor: 'pointer',
+      flexShrink: 0,
+      fontFamily: 'var(--font-zh)',
+      fontSize: 11,
+      fontWeight: 500,
+      background: catGroupFilter === g ? 'rgba(59,130,246,.18)' : 'rgba(255,255,255,.06)',
+      color: catGroupFilter === g ? 'var(--acc)' : 'var(--fg-3)',
+      border: '.5px solid ' + (catGroupFilter === g ? 'var(--acc)' : 'var(--border)')
+    }
+  }, g))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: 'repeat(5,1fr)',
       gap: 7
     }
-  }, cats.map((c, ci) => {
+  }, (type === 'expense' ? cats.filter(c => (c.group || '\u5176\u4ED6') === catGroupFilter) : cats).map((c, ci) => {
     const sel = catId ? catId === (c.id || c.label) : ci === 0;
     return /*#__PURE__*/React.createElement("div", {
       key: c.id || c.label,
@@ -17166,10 +17603,10 @@ function AddTxSheet({
       paddingLeft: 22
     }
   }, "\u78BA\u8A8D\u5F8C\u8DF3\u81F3\u8CC7\u7522\u7BA1\u7406")), /*#__PURE__*/React.createElement("div", {
-    style: C()
+    style: C({ opacity: .55 })
   }, /*#__PURE__*/React.createElement(CLabel, {
     icon: "\uD83D\uDCF8",
-    label: "\u62CD\u7167\u8A18\u9304"
+    label: "\u62CD\u7167\u8A18\u9304\uFF08\u958B\u767C\u4E2D\uFF09"
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -17219,40 +17656,35 @@ function AddTxSheet({
   }))), photo && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 9,
-      color: 'var(--inc)',
+      color: 'var(--fg-4)',
       marginTop: 3,
       fontFamily: 'var(--font-zh)'
     }
-  }, "\u2713 \u5DF2\u9078\u64C7")), /*#__PURE__*/React.createElement("div", {
-    onClick: () => {
-      onClose();
-      window.APP_NAVIGATE && window.APP_NAVIGATE(9);
-    },
-    style: C({
-      cursor: 'pointer'
-    })
-  }, /*#__PURE__*/React.createElement(CLabel, {
-    icon: "\uD83D\uDD14",
-    label: "\u63D0\u9192"
-  }), /*#__PURE__*/React.createElement("div", {
+    // \u6CE8\u610F\uFF1A\u9019\u88E1\u9078\u64C7\u7684\u7167\u7247\u76EE\u524D\u53EA\u662F\u9810\u89BD\u7528\uFF0C\u6C92\u6709\u771F\u7684\u5B58\u9032\u9019\u7B46\u4EA4\u6613\u7D00\u9304\uFF0C\u8AA0\u5BE6\u6A19\u793A\u907F\u514D\u4F7F\u7528\u8005\u8AA4\u4EE5\u70BA\u5DF2\u7D93\u9644\u52A0\u6210\u529F
+  }, "\u5DF2\u9078\u64C7\uFF08\u50C5\u9810\u89BD\uFF0C\u5C1A\u672A\u5132\u5B58\u9644\u4EF6\uFF09")), /*#__PURE__*/React.createElement("div", {
+    // \u8A2D\u5B9A\u63D0\u9192\uFF1A\u76F4\u63A5\u52FE\u9078+\u9078\u65E5\u671F\u6642\u9593\uFF0C\u5B58\u6A94\u6642\u76F4\u63A5\u5BEB\u5165 PF9 \u7684 pf_reminders\uFF0C\u4E0D\u518D\u662F\u300C\u9EDE\u4E86\u5C31\u8DF3\u96E2\u9019\u500B\u756B\u9762\u300D\u7684\u820A\u9023\u7D50\u65B9\u5F0F
+    onClick: () => setRemindOn(v => !v),
     style: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between'
+      ...C({ cursor: 'pointer' }),
+      background: remindOn ? 'rgba(59,130,246,.12)' : 'rgba(255,255,255,.05)',
+      border: remindOn ? '.5px solid rgba(59,130,246,.4)' : '.5px solid rgba(255,255,255,.08)'
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11,
-      fontWeight: 500,
-      color: 'var(--fg-4)',
-      fontFamily: 'var(--font-zh)'
+      width: 15, height: 15, borderRadius: 4,
+      background: remindOn ? 'var(--acc)' : 'rgba(255,255,255,.15)',
+      border: remindOn ? 'none' : '.5px solid rgba(255,255,255,.2)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
     }
-  }, "\u524D\u5F80\u63D0\u9192\u9801\u9762"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--fg-4)',
-      fontSize: 12
-    }
-  }, "\u203A"))), /*#__PURE__*/React.createElement("div", {
+  }, remindOn && /*#__PURE__*/React.createElement("span", {
+    style: { color: '#fff', fontSize: 9, fontWeight: 900 }
+  }, "\u2713")), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-zh)', color: remindOn ? 'var(--acc)' : 'var(--fg)' }
+  }, "\uD83D\uDD14 \u8A2D\u5B9A\u63D0\u9192")), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 9, color: 'var(--fg-4)', fontFamily: 'var(--font-zh)', paddingLeft: 22 }
+  }, remindOn ? "\u5B58\u6A94\u5F8C\u52A0\u5165 PF9 \u63D0\u9192" : "\u9078\u65E5\u671F\u6642\u9593\u63D0\u9192\u81EA\u5DF1")), /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowNote(true),
     style: C({
       cursor: 'pointer'
@@ -17282,7 +17714,23 @@ function AddTxSheet({
       color: 'var(--fg-4)',
       fontSize: 12
     }
-  }, "\u203A")))), /*#__PURE__*/React.createElement("div", {
+  }, "\u203A")))), remindOn && /*#__PURE__*/React.createElement("div", {
+    style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 18 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: C()
+  }, /*#__PURE__*/React.createElement(CLabel, { icon: "\uD83D\uDCC5", label: "\u63D0\u9192\u65E5\u671F" }), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: remindDate || txDate,
+    onChange: e => setRemindDate(e.target.value),
+    style: { background: 'transparent', border: 'none', color: 'var(--fg)', fontFamily: 'var(--font-zh)', fontSize: 13, fontWeight: 600, outline: 'none', width: '100%', padding: 0, colorScheme: 'dark' }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: C()
+  }, /*#__PURE__*/React.createElement(CLabel, { icon: "\u23F0", label: "\u63D0\u9192\u6642\u9593" }), /*#__PURE__*/React.createElement("input", {
+    type: "time",
+    value: remindTime,
+    onChange: e => setRemindTime(e.target.value),
+    style: { background: 'transparent', border: 'none', color: 'var(--fg)', fontFamily: 'var(--font-zh)', fontSize: 13, fontWeight: 600, outline: 'none', width: '100%', padding: 0, colorScheme: 'dark' }
+  }))), /*#__PURE__*/React.createElement("div", {
     onClick: handleSubmit,
     style: {
       width: '100%',
@@ -17846,15 +18294,10 @@ function PF13Final() {
     }));
     if(willPay){ setPayInfo(target); }   // 勾選已繳 → 彈出「如何繳費」
   }
-  // 模擬：拍照/PDF 辨識帳單 → 自動帶入金額
+  // 注意：這個功能還沒接真正的辨識引擎，原本是用「隨機亂數」假裝辨識出金額並自動帶入，
+  // 這樣使用者很容易誤把假金額當真的存進帳單，是很危險的設計，所以改成只提示「開發中」，不再亂填數字
   function simulateScan(kind){
-    setScanning(kind);
-    setTimeout(function(){
-      var demoAmt = 12000 + Math.floor(Math.random()*38000);
-      setBillForm({year:2026,month:new Date().getMonth()+1,amount:String(demoAmt),
-        minPayment:String(Math.max(1000,Math.round(demoAmt*0.1)))});
-      setScanning('');
-    }, 1500);
+    alert((kind==='photo'?'拍照辨識':'PDF 辨識')+'功能開發中，敬請期待！請直接在下方手動輸入帳單金額。');
   }
 
   // ── Styles
@@ -18186,13 +18629,13 @@ function PF13Final() {
         C('div',{style:{fontFamily:'var(--font-zh)',fontSize:17,fontWeight:700,
           color:'var(--fg)',marginBottom:20}},editId?'編輯帳單':'新增月帳單'),
         editId ? null : C('div',{style:{marginBottom:16}},
-          C('div',{style:{fontFamily:'var(--font-zh)',fontSize:11,color:'var(--fg-4)',marginBottom:8}},'快速輸入：拍照或上傳帳單，App 自動辨識金額並帶入'),
-          C('div',{style:{display:'flex',gap:8}},
+          C('div',{style:{fontFamily:'var(--font-zh)',fontSize:11,color:'var(--fg-4)',marginBottom:8}},'拍照或上傳帳單自動辨識金額（開發中），目前請手動輸入'),
+          C('div',{style:{display:'flex',gap:8,opacity:.55}},
             C('label',{style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:5,
               padding:'14px 8px',borderRadius:12,background:'rgba(59,130,246,.12)',
               border:'.5px solid rgba(59,130,246,.3)',cursor:'pointer'}},
               C('span',{style:{fontSize:24}},'📷'),
-              C('span',{style:{fontFamily:'var(--font-zh)',fontSize:12,fontWeight:600,color:'var(--acc)'}},'拍照／相片辨識'),
+              C('span',{style:{fontFamily:'var(--font-zh)',fontSize:12,fontWeight:600,color:'var(--acc)'}},'拍照／相片辨識（開發中）'),
               C('input',{type:'file',accept:'image/*',style:{display:'none'},
                 onChange:function(e){ if(e.target.files&&e.target.files.length) simulateScan('photo'); }})
             ),
@@ -18200,14 +18643,11 @@ function PF13Final() {
               padding:'14px 8px',borderRadius:12,background:'rgba(255,208,96,.12)',
               border:'.5px solid rgba(255,208,96,.3)',cursor:'pointer'}},
               C('span',{style:{fontSize:24}},'📄'),
-              C('span',{style:{fontFamily:'var(--font-zh)',fontSize:12,fontWeight:600,color:'var(--gld)'}},'上傳 PDF 帳單'),
+              C('span',{style:{fontFamily:'var(--font-zh)',fontSize:12,fontWeight:600,color:'var(--gld)'}},'上傳 PDF 帳單（開發中）'),
               C('input',{type:'file',accept:'application/pdf',style:{display:'none'},
                 onChange:function(e){ if(e.target.files&&e.target.files.length) simulateScan('pdf'); }})
             )
           ),
-          scanning ? C('div',{style:{marginTop:10,padding:'11px',borderRadius:10,
-            background:'rgba(255,255,255,.06)',textAlign:'center',fontFamily:'var(--font-zh)',
-            fontSize:13,color:'var(--fg-2)'}},(scanning==='photo'?'📷 辨識相片中…':'📄 解析 PDF 中…')+' 自動帶入金額') : null,
           C('div',{style:{borderTop:'.5px solid var(--border)',margin:'16px 0 4px'}})
         ),
         C('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}},
