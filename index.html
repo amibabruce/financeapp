@@ -159,6 +159,117 @@ var PF_CARD_STYLE = {
   WebkitBackdropFilter: 'blur(14px)',
   border: '.5px solid var(--border)'
 };
+
+// ── 共用：幣別與手動匯率機制（PF1/PF2/PF3/PF4/PF5/PF6/PF7/PF11/PF13 共用）──────
+// 設計：每筆紀錄多存 currency（幣別代碼，預設 'TWD'）+ fxRate（建立當下手動填的匯率快照）。
+// 舊資料沒有這兩個欄位 → pfToTWD 會自動當作 TWD/1，完全不影響既有資料與計算結果。
+// 每個幣別都有 code（代碼）+ zh（中文名稱），下拉選單會顯示「代碼 中文名稱」方便辨識。
+window.PF_CURRENCIES = [
+  { code: 'TWD', zh: '臺灣' },
+  { code: 'USD', zh: '美國' },
+  { code: 'JPY', zh: '日本' },
+  { code: 'KRW', zh: '韓國' },
+  { code: 'EUR', zh: '歐元' },
+  { code: 'CNY', zh: '人民幣' }
+];
+// 幣別代碼 → 中文名稱（給其他地方顯示用，例如「USD 美金」）
+window.pfCurrencyZh = function (code) {
+  var hit = window.PF_CURRENCIES.find(function (c) { return c.code === code; });
+  return hit ? hit.zh : '';
+};
+// 讀取「幣別→預設匯率」設定表（使用者在 PF10 設定，或在任何表單上次輸入過的匯率會記住）
+window.pfGetRates = function () {
+  var r;
+  try { r = JSON.parse(localStorage.getItem('pf_currency_rates') || 'null') || {}; }
+  catch (e) { r = {}; }
+  r.TWD = 1; // TWD 永遠固定 1，不可被覆寫
+  return r;
+};
+// 更新某個幣別的預設匯率（TWD 不可更動）
+window.pfSetRate = function (curr, rate) {
+  if (curr === 'TWD') return;
+  var r = window.pfGetRates();
+  r[curr] = parseFloat(rate) || 0;
+  localStorage.setItem('pf_currency_rates', JSON.stringify(r));
+};
+// 把一筆紀錄的金額換算成台幣（用紀錄自己存的 fxRate 快照，沒有的話才 fallback 用目前的預設匯率）
+window.pfToTWD = function (amount, currency, fxRate) {
+  amount = Number(amount) || 0;
+  if (!currency || currency === 'TWD') return amount;
+  var rate = Number(fxRate);
+  if (!rate || rate <= 0) rate = window.pfGetRates()[currency] || 0;
+  return Math.round(amount * rate);
+};
+// 共用 UI：幣別選單 + 匯率輸入框（非 TWD 時才顯示匯率欄＋換算後台幣金額預覽）
+// 選單裡每個幣別都顯示「代碼 中文名稱」；選單最後多一個「其他（自行輸入）」，
+// 選了之後會出現一個文字輸入框，讓使用者自己打幣別名稱（例如「韓元」或任何自訂代碼）。
+// props: { currency, rate, amount, onCurrencyChange(curr), onRateChange(rate), labelStyle, inputStyle }
+window.PfCurrencyPicker = function (props) {
+  var OTHER = '__OTHER__';
+  var currency = props.currency != null ? props.currency : 'TWD';
+  var rate = props.rate;
+  var amount = Number(props.amount) || 0;
+  var labelStyle = props.labelStyle || { fontFamily: 'var(--font-zh)', fontSize: 13, color: 'var(--fg-3)', marginBottom: 6 };
+  var inputStyle = props.inputStyle || {
+    width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10,
+    background: 'rgba(255,255,255,.06)', border: '.5px solid var(--border)', color: 'var(--fg)',
+    fontFamily: 'var(--font-zh)', fontSize: 14
+  };
+  // 目前是不是「清單裡找不到的自訂幣別」（包含剛選了其他、還沒打字的空字串）
+  var isKnown = currency === 'TWD' || window.PF_CURRENCIES.some(function (c) { return c.code === currency; });
+  var selectValue = isKnown ? currency : OTHER;
+  var children = [
+    React.createElement("div", { key: "lbl", style: labelStyle }, "幣別"),
+    React.createElement("select", {
+      key: "sel",
+      value: selectValue,
+      onChange: function (e) {
+        var nc = e.target.value;
+        if (nc === OTHER) {
+          // 選「其他」→ 清空，等使用者自己打幣別名稱；匯率也清空讓他自己填
+          props.onCurrencyChange('');
+          if (props.onRateChange) props.onRateChange('');
+          return;
+        }
+        props.onCurrencyChange(nc);
+        // 切換幣別時，自動帶入這個幣別上次存的預設匯率，使用者可以再手動覆寫
+        if (props.onRateChange) props.onRateChange(nc === 'TWD' ? 1 : (window.pfGetRates()[nc] || ''));
+      },
+      style: inputStyle
+    }, window.PF_CURRENCIES.map(function (c) {
+      return React.createElement("option", { key: c.code, value: c.code }, c.code + ' ' + c.zh);
+    }).concat([
+      React.createElement("option", { key: OTHER, value: OTHER }, "其他（自行輸入）")
+    ]))
+  ];
+  if (selectValue === OTHER) {
+    children.push(React.createElement("input", {
+      key: "custom",
+      type: "text",
+      value: currency || '',
+      placeholder: "自己輸入幣別名稱，例如：韓元",
+      onChange: function (e) { props.onCurrencyChange(e.target.value); },
+      style: Object.assign({}, inputStyle, { marginTop: 8 })
+    }));
+  }
+  if (currency !== 'TWD') {
+    children.push(React.createElement("div", { key: "rlbl", style: Object.assign({}, labelStyle, { marginTop: 10 }) }, "匯率（1 " + (currency || '該幣別') + " = ? TWD，手動填）"));
+    children.push(React.createElement("input", {
+      key: "rinp",
+      type: "number",
+      value: rate === undefined || rate === null ? '' : rate,
+      placeholder: "例如 31.6",
+      onChange: function (e) { props.onRateChange(e.target.value); },
+      style: inputStyle
+    }));
+    if (amount && rate) {
+      children.push(React.createElement("div", {
+        key: "prev", style: { fontFamily: 'var(--font-zh)', fontSize: 12, color: 'var(--fg-3)', marginTop: 6 }
+      }, "≈ NT$ " + window.pfToTWD(amount, currency, rate).toLocaleString()));
+    }
+  }
+  return React.createElement("div", { style: { marginBottom: 14 } }, children);
+};
 // ─────────────────────────────────────────────────────────────────
 </script>
 <script>
@@ -485,7 +596,7 @@ function(a,b,c){if(!Vd(b))throw Error(n(200));return Wd(null,a,b,!1,c)};Q.unmoun
 function PF1Final() {
   const C = React.createElement; // 簡寫別名，方便新增的程式碼撰寫
   const AddTxSheet = window.AddTxSheet || (() => null); // 共用記帳 Sheet
-  const [mode, setMode] = React.useState(3); // 預設顯示「含借貸」模式（新增資產淨值後，含借貸變為第 4 個，index 3）
+  const [mode, setMode] = React.useState(2); // 預設顯示「含借貸」模式（共 3 種模式，含借貸是第 3 個，index 2）
   const [hidden, setHidden] = React.useState(false);
   const [ldgOpen, setLdgOpen] = React.useState(false);
   const [ldgView, setLdgView] = React.useState('list'); // 'list' | 'add' | 'manage'
@@ -998,19 +1109,6 @@ function PF1Final() {
     }
   })();
 
-  // 資產淨值：從 PF6 的 pf_assets 讀取，依當前帳本加總現值（已封存的資產不計入，與 PF6 邏輯一致）
-  const ldgAssetsTotal = (() => {
-    try {
-      const arr = JSON.parse(localStorage.getItem('pf_assets') || 'null');
-      if (!arr || !arr.length) return 0;
-      return arr
-        .filter(a => (a.ledger ?? 0) === ledgerIdx && !a.disposed)
-        .reduce((s, a) => s + (Number(a.currentValue) || 0), 0);
-    } catch {
-      return 0;
-    }
-  })();
-
   // ── 動態 cards：依當前帳本的帳戶即時計算，空類別不顯示
   const cards = cardsDef.map(c => {
     if (c.id === 'debt') {
@@ -1122,12 +1220,8 @@ function PF1Final() {
     value: ldgCash + ldgCredit + ldgSettle + ldgPositions,
     delta: hasBalance ? "+3.8%" : "—"
   }, {
-    label: "+ 資產淨值",
-    value: ldgCash + ldgCredit + ldgSettle + ldgPositions + ldgAssetsTotal,
-    delta: hasBalance ? "+4.1%" : "—"
-  }, {
     label: "含借貸",
-    value: ldgCash + ldgCredit + ldgSettle + ldgPositions + ldgAssetsTotal - ldgDebtTotal,
+    value: ldgCash + ldgCredit + ldgSettle + ldgPositions - ldgDebtTotal,
     delta: hasBalance ? "+1.9%" : "—"
   }];
   const cur = modes[mode]; // 當前模式的顯示值
@@ -1162,13 +1256,6 @@ function PF1Final() {
     color: "var(--acc)",
     trend: true,
     key: "trend"
-  }, {
-    icon: "🏷️",
-    label: "資產淨值",
-    value: ldgAssetsTotal,
-    sub: hidden ? "••••••" : (ldgAssetsTotal > 0 ? "點擊查看資產管理" : "尚無資產"),
-    color: "var(--gld)",
-    key: "assets" // 點擊直接導頁至 PF6，非開 Modal
   }];
   const cardAccounts = {
     cash: filteredAccounts.filter(a => a.type === '現金帳戶'),
@@ -2284,6 +2371,7 @@ function PF1Final() {
   function MgmtContent() {
     const [editingId, setEditingId] = React.useState(null); // 哪個帳戶展開編輯
     const [showAdd, setShowAdd] = React.useState(false); // 顯示新增表單
+    // amount：起始餘額（使用者選的幣別金額）；currency/fxRate：幣別與手動匯率快照
     const emptyNew = {
       name: '',
       type: '現金帳戶',
@@ -2291,7 +2379,10 @@ function PF1Final() {
       bankCode: '',
       accountNo: '',
       notes: '',
-      ledgerId: 'ldg-0'
+      ledgerId: 'ldg-0',
+      amount: '',
+      currency: 'TWD',
+      fxRate: 1
     };
     const [newAcct, setNewAcct] = React.useState(emptyNew);
     const typeConfig = {
@@ -2336,11 +2427,18 @@ function PF1Final() {
       if (!newAcct.name.trim()) return;
       const id = 'custom-' + Date.now();
       const cfg = typeConfig[newAcct.type] || typeConfig['現金帳戶'];
+      // 起始餘額用使用者選的幣別輸入，存檔前統一換算成台幣（既有的加總邏輯不用改）
+      const currency = newAcct.currency || 'TWD';
+      const fxRate = currency === 'TWD' ? 1 : (parseFloat(newAcct.fxRate) || 0);
+      const amountOrig = parseFloat(newAcct.amount) || 0;
       const acct = {
         id,
         name: newAcct.name.trim(),
         type: newAcct.type,
-        amount: 0,
+        amount: window.pfToTWD(amountOrig, currency, fxRate),
+        amountOrig,
+        currency,
+        fxRate,
         color: cfg.color,
         bankName: newAcct.bankName,
         bankCode: newAcct.bankCode,
@@ -2508,6 +2606,27 @@ function PF1Final() {
       placeholder: "0000-000-000000",
       style: inputStyle
     })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: labelStyle
+    }, "\u8D77\u59CB\u9918\u984D\uFF08" + (newAcct.currency || 'TWD') + "\uFF09"), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      value: newAcct.amount,
+      onChange: e => setNewAcct(p => ({
+        ...p,
+        amount: e.target.value
+      })),
+      placeholder: "0",
+      style: inputStyle
+    })), /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+      currency: newAcct.currency,
+      rate: newAcct.fxRate,
+      amount: parseFloat(newAcct.amount) || 0,
+      onCurrencyChange: c => setNewAcct(p => ({ ...p, currency: c })),
+      onRateChange: r => setNewAcct(p => ({ ...p, fxRate: r }))
+    }), /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 10
       }
@@ -5436,6 +5555,8 @@ function PF3Final() {
   const [fType, setFType] = React.useState('expense');
   const [fCatIdx, setFCatIdx] = React.useState(0);
   const [fAmt, setFAmt] = React.useState('');
+  const [fCurrency, setFCurrency] = React.useState('TWD'); // 幣別（金額換算用）
+  const [fFxRate, setFFxRate] = React.useState(1); // 手動匯率快照
   const [fFreq, setFFreq] = React.useState('monthly');
   const [fDate, setFDate] = React.useState('');
   const [fAcc, setFAcc] = React.useState('');
@@ -5449,6 +5570,8 @@ function PF3Final() {
     setFType('expense');
     setFCatIdx(0);
     setFAmt('');
+    setFCurrency('TWD');
+    setFFxRate(1);
     setFFreq('monthly');
     setFDate('');
     setFAcc('');
@@ -5463,7 +5586,10 @@ function PF3Final() {
     setFName(item.name);
     setFType(item.type);
     setFCatIdx(ci >= 0 ? ci : 0);
-    setFAmt(String(item.amount));
+    // 編輯時顯示「原始輸入幣別金額」（amountOrig），舊資料沒有就用已存的台幣金額（視為 TWD）
+    setFAmt(String(item.amountOrig != null ? item.amountOrig : item.amount));
+    setFCurrency(item.currency || 'TWD');
+    setFFxRate(item.fxRate || 1);
     setFFreq(item.freq || 'monthly');
     setFDate(item.nextDate || '');
     setFAcc(item.acc || '');
@@ -5479,13 +5605,19 @@ function PF3Final() {
       emoji: '📌',
       label: '其他'
     };
+    // 金額是使用者選的幣別輸入，存檔前統一換算成台幣（既有的月支出加總邏輯不用改）
+    const amountOrig = parseFloat(fAmt) || 0;
+    const fxRate = fCurrency === 'TWD' ? 1 : (parseFloat(fFxRate) || 0);
     const record = {
       id: editItem.id || Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       name: fName.trim(),
       type: fType,
       cat: safeCat.emoji,
       catLabel: safeCat.label,
-      amount: parseFloat(fAmt) || 0,
+      amount: window.pfToTWD(amountOrig, fCurrency, fxRate),
+      amountOrig,
+      currency: fCurrency,
+      fxRate,
       freq: fFreq,
       nextDate: fDate,
       acc: fAcc,
@@ -5977,11 +6109,15 @@ function PF3Final() {
       ),
       /*#__PURE__*/React.createElement("div", {onClick:()=>{setCalcDisplay3(fAmt||'');setCalcEq3('');setShowCalc3(true);}, style:{background:'rgba(255,255,255,.05)',border:'.5px solid rgba(255,255,255,.1)',borderRadius:14,padding:'14px 16px',marginBottom:16,cursor:'pointer'}},
         /*#__PURE__*/React.createElement("div", {style:{display:'flex',alignItems:'center',gap:10}},
-          /*#__PURE__*/React.createElement("span", {style:{fontSize:22,fontWeight:700,color:fType==='expense'?'var(--inc)':'var(--exp)',fontFamily:'var(--font-en)'}}, "NT$"),
+          /*#__PURE__*/React.createElement("span", {style:{fontSize:22,fontWeight:700,color:fType==='expense'?'var(--inc)':'var(--exp)',fontFamily:'var(--font-en)'}}, fCurrency==='TWD'?"NT$":fCurrency),
           /*#__PURE__*/React.createElement("div", {style:{flex:1,color:fAmt?'var(--fg)':'var(--fg-4)',fontSize:34,fontWeight:800,fontFamily:'var(--font-en)',letterSpacing:'-.02em'}}, fAmt||'0'),
           /*#__PURE__*/React.createElement("span", {style:{fontSize:14,color:'var(--fg-4)'}}, "🖩")
         )
       ),
+      /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+        currency: fCurrency, rate: fFxRate, amount: parseFloat(fAmt) || 0,
+        onCurrencyChange: setFCurrency, onRateChange: setFFxRate
+      }),
       /*#__PURE__*/React.createElement("div", {style:{marginBottom:16}},
         /*#__PURE__*/React.createElement("div", {style:{fontFamily:'var(--font-zh)',fontSize:13,fontWeight:700,color:'var(--fg-2)',marginBottom:10}}, "選擇分類"),
         /*#__PURE__*/React.createElement("div", {style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:7}},
@@ -6110,12 +6246,13 @@ function PF4Final() {
   }];
 
   // positions 從 localStorage 載入，無資料則用預設
+  // 乾淨版（PF_SEED_DISABLED）不要 fallback 回示範持倉，直接給空陣列
   const [positions, setPositions] = React.useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pf_positions') || 'null');
-      return saved && saved.length ? saved : defaultPositions;
+      return saved && saved.length ? saved : (window.PF_SEED_DISABLED ? [] : defaultPositions);
     } catch {
-      return defaultPositions;
+      return window.PF_SEED_DISABLED ? [] : defaultPositions;
     }
   });
 
@@ -6126,13 +6263,16 @@ function PF4Final() {
   };
 
   // ── Modal 狀態 ────────────────────────────────────────────
+  // currency：這筆持倉的計價幣別（預設 TWD）；fxRate：手動填的匯率快照
   const emptyForm = {
     name: "",
     type: "台股",
     shares: "",
     cost: "",
     value: "",
-    notes: ""
+    notes: "",
+    currency: "TWD",
+    fxRate: 1
   };
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editId, setEditId] = React.useState(null); // null = 新增，有值 = 編輯
@@ -6146,13 +6286,16 @@ function PF4Final() {
   };
   const openEdit = p => {
     setEditId(p.id);
+    // 編輯時顯示「原始輸入幣別金額」（costOrig/valueOrig），舊資料沒有這兩個欄位就用已存的台幣金額（視為 TWD）
     setForm({
       name: p.name,
       type: p.type,
       shares: String(p.shares),
-      cost: String(p.cost),
-      value: String(p.value),
-      notes: p.notes || ""
+      cost: String(p.costOrig != null ? p.costOrig : p.cost),
+      value: String(p.valueOrig != null ? p.valueOrig : p.value),
+      notes: p.notes || "",
+      currency: p.currency || "TWD",
+      fxRate: p.fxRate || 1
     });
     setModalOpen(true);
   };
@@ -6167,6 +6310,12 @@ function PF4Final() {
     const cost = parseInt(form.cost) || 0;
     const value = parseInt(form.value) || 0;
     if (!name) return;
+    // 幣別換算：cost/value 欄位輸入的是「使用者選的幣別」金額，存檔前統一換算成台幣，
+    // 這樣 PF1/PF4/PF12 既有的加總邏輯完全不用改，全部都還是讀台幣金額
+    const currency = form.currency || 'TWD';
+    const fxRate = currency === 'TWD' ? 1 : (parseFloat(form.fxRate) || 0);
+    const costTWD = window.pfToTWD(cost, currency, fxRate);
+    const valueTWD = window.pfToTWD(value, currency, fxRate);
     if (editId) {
       // 編輯
       savePositions(positions.map(p => p.id === editId ? {
@@ -6174,9 +6323,13 @@ function PF4Final() {
         name,
         type: form.type,
         shares,
-        cost,
-        value,
-        notes: form.form
+        cost: costTWD,
+        value: valueTWD,
+        costOrig: cost,
+        valueOrig: value,
+        notes: form.notes,
+        currency,
+        fxRate
       } : p));
     } else {
       // 新增
@@ -6185,10 +6338,14 @@ function PF4Final() {
         name,
         type: form.type,
         shares,
-        cost,
-        value,
+        cost: costTWD,
+        value: valueTWD,
+        costOrig: cost,
+        valueOrig: value,
         notes: form.notes,
-        ledger
+        ledger,
+        currency,
+        fxRate
       };
       savePositions([...positions, newItem]);
     }
@@ -6536,7 +6693,7 @@ function PF4Final() {
       color: "var(--fg-3)",
       marginBottom: 4
     }
-  }, "\u6210\u672C\uFF08NT$\uFF09"), /*#__PURE__*/React.createElement("input", {
+  }, "\u6210\u672C\uFF08" + (form.currency || 'TWD') + "\uFF09"), /*#__PURE__*/React.createElement("input", {
     value: form.cost,
     onChange: e => setForm(f => ({
       ...f,
@@ -6567,7 +6724,7 @@ function PF4Final() {
       color: "var(--fg-3)",
       marginBottom: 4
     }
-  }, "\u73FE\u503C\uFF08NT$\uFF09"), /*#__PURE__*/React.createElement("input", {
+  }, "\u73FE\u503C\uFF08" + (form.currency || 'TWD') + "\uFF09"), /*#__PURE__*/React.createElement("input", {
     value: form.value,
     onChange: e => setForm(f => ({
       ...f,
@@ -6587,7 +6744,16 @@ function PF4Final() {
       color: "var(--fg)",
       outline: "none"
     }
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))),
+  /* \u5E63\u5225 + \u624B\u52D5\u532F\u7387\uFF08\u975E\u53F0\u5E63\u624D\u6703\u986F\u793A\u532F\u7387\u6B04\u8207\u63DB\u7B97\u5F8C\u53F0\u5E63\u73FE\u503C\u9810\u89BD\uFF09 */
+  React.createElement(window.PfCurrencyPicker, {
+    currency: form.currency,
+    rate: form.fxRate,
+    amount: parseFloat(form.value) || 0,
+    onCurrencyChange: c => setForm(f => ({ ...f, currency: c })),
+    onRateChange: r => setForm(f => ({ ...f, fxRate: r }))
+  }),
+  /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }
@@ -7153,20 +7319,21 @@ function PF5Final() {
   }];
 
   // ── localStorage ─────────────────────────────────────────
+  // 乾淨版（PF_SEED_DISABLED）不要 fallback 回示範借貸資料，直接給空陣列
   const [debtsIn, setDebtsIn] = React.useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem('pf_debts_in') || 'null');
-      return s && s.length ? s : defaultIn;
+      return s && s.length ? s : (window.PF_SEED_DISABLED ? [] : defaultIn);
     } catch {
-      return defaultIn;
+      return window.PF_SEED_DISABLED ? [] : defaultIn;
     }
   });
   const [debtsOut, setDebtsOut] = React.useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem('pf_debts_out') || 'null');
-      return s && s.length ? s : defaultOut;
+      return s && s.length ? s : (window.PF_SEED_DISABLED ? [] : defaultOut);
     } catch {
-      return defaultOut;
+      return window.PF_SEED_DISABLED ? [] : defaultOut;
     }
   });
   const saveIn = list => {
@@ -7205,7 +7372,9 @@ function PF5Final() {
     startDate: "",
     endDate: "",
     notes: "",
-    includeInTotal: true
+    includeInTotal: true,
+    currency: "TWD",
+    fxRate: 1
   };
   const emptyOut = {
     name: "",
@@ -7214,7 +7383,9 @@ function PF5Final() {
     due: "",
     status: "未還",
     returnDate: "",
-    notes: ""
+    notes: "",
+    currency: "TWD",
+    fxRate: 1
   };
   const [formIn, setFormIn] = React.useState(emptyIn);
   const [formOut, setFormOut] = React.useState(emptyOut);
@@ -7227,18 +7398,21 @@ function PF5Final() {
   const openEditIn = d => {
     setEditId(d.id);
     setTab(0);
+    // 編輯時顯示「原始輸入幣別金額」（xxxOrig），舊資料沒有就用已存的台幣金額（視為 TWD）
     setFormIn({
       name: d.name,
       lender: d.lender,
       type: d.type || "銀行貸款",
-      total: String(d.total),
-      balance: String(d.balance),
-      monthly: String(d.monthly),
+      total: String(d.totalOrig != null ? d.totalOrig : d.total),
+      balance: String(d.balanceOrig != null ? d.balanceOrig : d.balance),
+      monthly: String(d.monthlyOrig != null ? d.monthlyOrig : d.monthly),
       rate: String(d.rate),
       startDate: d.startDate || "",
       endDate: d.endDate || "",
       notes: d.notes || "",
-      includeInTotal: d.includeInTotal !== false
+      includeInTotal: d.includeInTotal !== false,
+      currency: d.currency || "TWD",
+      fxRate: d.fxRate || 1
     });
     setModal(MODAL_IN);
   };
@@ -7248,11 +7422,13 @@ function PF5Final() {
     setFormOut({
       name: d.name,
       borrower: d.borrower,
-      amount: String(d.amount),
+      amount: String(d.amountOrig != null ? d.amountOrig : d.amount),
       due: d.due || "",
       status: d.status || "未還",
       returnDate: d.returnDate || "",
-      notes: d.notes || ""
+      notes: d.notes || "",
+      currency: d.currency || "TWD",
+      fxRate: d.fxRate || 1
     });
     setModal(MODAL_OUT);
   };
@@ -7268,14 +7444,21 @@ function PF5Final() {
   };
   const handleSaveIn = () => {
     if (!formIn.name.trim()) return;
+    // 總額/餘額/月付金都用同一個幣別輸入，存檔前統一換算成台幣（既有的加總邏輯不用改）
+    const currency = formIn.currency || 'TWD';
+    const fxRate = currency === 'TWD' ? 1 : (parseFloat(formIn.fxRate) || 0);
+    const totalOrig = parseFloat(formIn.total) || 0;
+    const balanceOrig = parseFloat(formIn.balance) || 0;
+    const monthlyOrig = parseFloat(formIn.monthly) || 0;
     const rec = {
       id: editId || "di-" + Date.now(),
       name: formIn.name.trim(),
       lender: formIn.lender.trim(),
       type: formIn.type || "銀行貸款",
-      total: parseFloat(formIn.total) || 0,
-      balance: parseFloat(formIn.balance) || 0,
-      monthly: parseFloat(formIn.monthly) || 0,
+      total: window.pfToTWD(totalOrig, currency, fxRate),
+      balance: window.pfToTWD(balanceOrig, currency, fxRate),
+      monthly: window.pfToTWD(monthlyOrig, currency, fxRate),
+      totalOrig, balanceOrig, monthlyOrig, currency, fxRate,
       rate: parseFloat(formIn.rate) || 0,
       startDate: formIn.startDate,
       endDate: formIn.endDate,
@@ -7288,11 +7471,15 @@ function PF5Final() {
   };
   const handleSaveOut = () => {
     if (!formOut.name.trim()) return;
+    const currency = formOut.currency || 'TWD';
+    const fxRate = currency === 'TWD' ? 1 : (parseFloat(formOut.fxRate) || 0);
+    const amountOrig = parseFloat(formOut.amount) || 0;
     const rec = {
       id: editId || "do-" + Date.now(),
       name: formOut.name.trim(),
       borrower: formOut.borrower.trim(),
-      amount: parseFloat(formOut.amount) || 0,
+      amount: window.pfToTWD(amountOrig, currency, fxRate),
+      amountOrig, currency, fxRate,
       due: formOut.due,
       status: formOut.status,
       returnDate: formOut.returnDate,
@@ -7926,7 +8113,11 @@ function PF5Final() {
     placeholder: "0.00",
     step: "0.01",
     style: inp
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+    currency: formIn.currency, rate: formIn.fxRate, amount: parseFloat(formIn.balance) || 0,
+    onCurrencyChange: c => setFormIn(f => ({ ...f, currency: c })),
+    onRateChange: r => setFormIn(f => ({ ...f, fxRate: r }))
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 8,
@@ -8163,7 +8354,11 @@ function PF5Final() {
     })),
     type: "date",
     style: inp
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+    currency: formOut.currency, rate: formOut.fxRate, amount: parseFloat(formOut.amount) || 0,
+    onCurrencyChange: c => setFormOut(f => ({ ...f, currency: c })),
+    onRateChange: r => setFormOut(f => ({ ...f, fxRate: r }))
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 10
     }
@@ -8811,7 +9006,7 @@ function PF6Final() {
   const [modal, setModal] = React.useState('none');
   const [selId, setSelId] = React.useState(null);
   const [delConfirm, setDelConfirm] = React.useState(false);
-  const emptyForm = {name:'',catType:'不動產',purchaseDate:'',purchasePrice:'',currentValue:'',warrantyDate:'',warrantyNote:'',notes:''};
+  const emptyForm = {name:'',catType:'不動產',purchaseDate:'',purchasePrice:'',currentValue:'',warrantyDate:'',warrantyNote:'',notes:'',currency:'TWD',fxRate:1};
   const [form, setForm] = React.useState(emptyForm);
   const selAsset = assets.find(a=>a.id===selId);
 
@@ -8963,12 +9158,22 @@ function PF6Final() {
   };
   const openEdit = () => {
     if (!selAsset) return;
-    setForm({name:selAsset.name,catType:selAsset.catType,purchaseDate:selAsset.purchaseDate||'',purchasePrice:String(selAsset.purchasePrice||''),currentValue:String(selAsset.currentValue||''),warrantyDate:selAsset.warrantyDate||'',warrantyNote:selAsset.warrantyNote||'',notes:selAsset.notes||''});
+    // 編輯時顯示「原始輸入幣別金額」（xxxOrig），舊資料沒有就用已存的台幣金額（視為 TWD）
+    setForm({name:selAsset.name,catType:selAsset.catType,purchaseDate:selAsset.purchaseDate||'',purchasePrice:String(selAsset.purchasePriceOrig!=null?selAsset.purchasePriceOrig:(selAsset.purchasePrice||'')),currentValue:String(selAsset.currentValueOrig!=null?selAsset.currentValueOrig:(selAsset.currentValue||'')),warrantyDate:selAsset.warrantyDate||'',warrantyNote:selAsset.warrantyNote||'',notes:selAsset.notes||'',currency:selAsset.currency||'TWD',fxRate:selAsset.fxRate||1});
     setModal('edit');
   };
   const saveForm = () => {
     if (!form.name.trim()) return;
-    const item = {...form, purchasePrice:Number(form.purchasePrice)||0, currentValue:Number(form.currentValue)||0};
+    // 購入價/現值預估用同一個幣別輸入，存檔前統一換算成台幣（既有的加總邏輯不用改）
+    const currency = form.currency || 'TWD';
+    const fxRate = currency === 'TWD' ? 1 : (parseFloat(form.fxRate) || 0);
+    const purchasePriceOrig = Number(form.purchasePrice) || 0;
+    const currentValueOrig = Number(form.currentValue) || 0;
+    const item = {...form,
+      purchasePrice: window.pfToTWD(purchasePriceOrig, currency, fxRate),
+      currentValue: window.pfToTWD(currentValueOrig, currency, fxRate),
+      purchasePriceOrig, currentValueOrig, currency, fxRate
+    };
     if (modal==='add') saveAssets([{...item,id:'a'+Date.now(),ledger},...assets]);
     else saveAssets(assets.map(a=>a.id===selId?{...a,...item}:a));
     setModal('none');
@@ -9310,6 +9515,8 @@ function PF6Final() {
                 cats.map(c=>C('option',{key:c.label,value:c.label},c.emoji+' '+c.label)))
             : C('input',{type,value:form[f]||'',onChange:e=>setForm({...form,[f]:e.target.value}),placeholder:ph||'',style:inputSt})
         )).concat([
+          C(window.PfCurrencyPicker, {key:'curr', currency:form.currency, rate:form.fxRate, amount:parseFloat(form.currentValue)||0,
+            onCurrencyChange:c=>setForm({...form,currency:c}), onRateChange:r=>setForm({...form,fxRate:r})}),
           C('div',{key:'save',onClick:saveForm,style:{marginTop:8,padding:'14px',background:'var(--acc)',borderRadius:14,fontFamily:'var(--font-zh)',fontSize:15,fontWeight:600,color:'#fff',textAlign:'center',cursor:'pointer'}},'儲存')
         ])
       )
@@ -12244,7 +12451,7 @@ function PF10Final() {
   };
 
   // ── Daak CSV 匯入 ──────────────────────────────────────────────────────
-  const SKIP_CATS = new Set(['更新餘額','更新欠款','還款','信用卡沖銷','歸還','收回','更新欠款','借出','借入','虧損','收益']);
+  const SKIP_CATS = new Set(['更新餘額','更新欠款','還款','信用卡沖銷','歸還','收回','更新欠款','借出','借入','虧損','收益','轉帳']); // 轉帳是自己帳戶間搬錢，不是真正收支，匯入會讓收支總額失真所以跳過
   const CAT_EMOJI = {
     '吃喝':'🍜','飲食':'🍜','餐飲':'🍜',
     '交通':'🚇','運輸':'🚇',
@@ -12273,7 +12480,13 @@ function PF10Final() {
         // 跳過 header
         const rows = lines.slice(1);
         const existing = JSON.parse(localStorage.getItem('pf_transactions') || '[]');
-        const existingKeys = new Set(existing.map(t => t.date + '|' + t.amount + '|' + (t.note||'')));
+        // 去重 key 加上 time，避免「同一天、同金額、同備註」的兩筆不同交易被誤判成重複（例如同一天買兩次同價商品）
+        const existingKeys = new Set(existing.map(t => t.date + '|' + (t.time||'') + '|' + t.amount + '|' + (t.note||'')));
+        // 目前已建立的帳戶名稱清單，用來比對匯入資料裡有哪些帳戶名稱還沒在 PF1 建立
+        const existingAccNames = new Set(
+          (JSON.parse(localStorage.getItem('pf_accounts') || '[]')).map(a => a.name)
+        );
+        const missingAccSet = new Set();
         const newTxs = [];
         let skipped = 0;
 
@@ -12290,15 +12503,22 @@ function PF10Final() {
           cols.push(cur.trim());
 
           const [typeStr, timeStr, accStr, , currStr, amtStr, l1, l2, , noteStr] = cols;
+          const rateStr = cols[20]; // 最後一欄是匯率（只有外幣才有值）
           if (!typeStr || !timeStr) { skipped++; return; }
 
           // 跳過不需要的分類
           if (SKIP_CATS.has(l1)) { skipped++; return; }
-          // 跳過外幣（非 NT$）
-          if (currStr && currStr !== 'NT$') { skipped++; return; }
 
           const type = typeStr === '支出' ? 'expense' : typeStr === '收入' ? 'income' : 'transfer';
-          const amount = Math.abs(parseFloat(amtStr) || 0);
+          let amount = Math.abs(parseFloat(amtStr) || 0);
+
+          // 外幣（非 NT$）：用匯率換算成台幣，沒有有效匯率才跳過
+          if (currStr && currStr !== 'NT$') {
+            const rate = parseFloat(rateStr);
+            if (!rate || rate <= 0) { skipped++; return; }
+            amount = Math.round(amount * rate);
+          }
+
           if (amount === 0) { skipped++; return; }
 
           // 解析日期時間
@@ -12311,10 +12531,13 @@ function PF10Final() {
           const catName = getCatName(l1, l2);
           const cat = getEmoji(l1, l2);
 
-          // 去重
-          const key = date + '|' + amount + '|' + note;
+          // 去重（含 time，避免同天同金額同備註的不同筆交易被誤刪）
+          const key = date + '|' + time + '|' + amount + '|' + note;
           if (existingKeys.has(key)) { skipped++; return; }
           existingKeys.add(key);
+
+          // 記錄這個帳戶名稱目前 PF1 還沒建立（讓使用者匯入後自己決定要不要手動建立）
+          if (acc && !existingAccNames.has(acc)) { missingAccSet.add(acc); }
 
           newTxs.push({
             id: 'daak-' + Date.now() + '-' + idx,
@@ -12335,7 +12558,7 @@ function PF10Final() {
         });
         localStorage.setItem('pf_transactions', JSON.stringify(merged));
         window.dispatchEvent(new Event('pf-txs-updated'));
-        setImportResult({ ok: newTxs.length, skip: skipped, msg: '匯入完成！' });
+        setImportResult({ ok: newTxs.length, skip: skipped, msg: '匯入完成！', missingAccs: Array.from(missingAccSet) });
       } catch(err) {
         setImportResult({ ok: 0, skip: 0, msg: '檔案格式錯誤：' + err.message });
       }
@@ -12694,7 +12917,15 @@ function PF10Final() {
     React.createElement("div", { style:{ fontFamily:"var(--font-zh)", fontSize:13, color:"var(--fg-3)", textAlign:"center", lineHeight:1.6 } },
       importResult.ok > 0 && `\u5DF2\u532F\u5165 ${importResult.ok} \u7B46\u8A18\u9304`,
       importResult.ok > 0 && React.createElement("br", null),
-      importResult.skip > 0 && `\u7565\u904E ${importResult.skip} \u7B46\uFF08\u8F49\u5E33\u8ABF\u5E33/\u91CD\u8907/\u5916\u5E63\uFF09`
+      importResult.skip > 0 && `\u7565\u904E ${importResult.skip} \u7B46\uFF08\u8F49\u5E33/\u91CD\u8907/\u5916\u5E63\u7121\u532F\u7387\uFF09`
+    ),
+    /* \u532F\u5165\u8CC7\u6599\u88E1\u7528\u5230\u3001\u4F46 PF1 \u9084\u6C92\u5EFA\u7ACB\u7684\u5E33\u6236\u540D\u7A31\u6E05\u55AE\uFF08\u7528 <br> \u63DB\u884C\uFF0Cmsg \u6587\u5B57\u672C\u8EAB\u4E0D\u652F\u63F4\u63DB\u884C\uFF09 */
+    importResult.missingAccs && importResult.missingAccs.length > 0 && React.createElement("div", {
+      style: { fontFamily:"var(--font-zh)", fontSize:12, color:"var(--gld)", textAlign:"left", lineHeight:1.7, marginTop:12, padding:"10px 12px", background:"rgba(255,208,96,.08)", borderRadius:10 }
+    },
+      "\u4EE5\u4E0B\u5E33\u6236\u540D\u7A31\u5C1A\u672A\u5728 PF1 \u5EFA\u7ACB\uFF0C\u9019\u4E9B\u4EA4\u6613\u76EE\u524D\u66AB\u7121\u6B78\u5C6C\u5E33\u6236\uFF1A",
+      React.createElement("br", null),
+      importResult.missingAccs.join("\u3001")
     ),
     React.createElement("div", {
       onClick: () => setImportResult(null),
@@ -12935,7 +13166,9 @@ function PF11Final() {
     platform: "",
     url: "",
     notes: "",
-    completedAt: ""
+    completedAt: "",
+    currency: "TWD",
+    fxRate: 1
   };
   const [wForm, setWForm] = React.useState(emptyWish);
   const emptyPre = {
@@ -12947,7 +13180,9 @@ function PF11Final() {
     payStatus: "已全付",
     paidAmt: "",
     arrived: false,
-    notes: ""
+    notes: "",
+    currency: "TWD",
+    fxRate: 1
   };
   const [pForm, setPForm] = React.useState(emptyPre);
   const [delConfirm, setDelConfirm] = React.useState(null);
@@ -12970,10 +13205,13 @@ function PF11Final() {
   };
   const openEditWish = item => {
     setEditId(item.id);
+    // 編輯時顯示「原始輸入幣別金額」（xxxOrig），舊資料沒有就用已存的台幣金額（視為 TWD）
     setWForm({
       ...item,
-      price: String(item.price),
-      savedAmt: String(item.savedAmt)
+      price: String(item.priceOrig != null ? item.priceOrig : item.price),
+      savedAmt: String(item.savedAmtOrig != null ? item.savedAmtOrig : item.savedAmt),
+      currency: item.currency || "TWD",
+      fxRate: item.fxRate || 1
     });
     setModal(MODAL_WISH);
   };
@@ -12983,11 +13221,17 @@ function PF11Final() {
     const prevArchived = ARCHIVED_STATUS.includes(prevStatus);
     const nowArchived = ARCHIVED_STATUS.includes(wForm.status);
     const completedAt = nowArchived && !prevArchived ? new Date().toISOString().slice(0, 10) : editId ? wishlist.find(i => i.id === editId)?.completedAt || "" : "";
+    // 目標金額/已存金額用同一個幣別輸入，存檔前統一換算成台幣（既有的加總邏輯不用改）
+    const wCurrency = wForm.currency || "TWD";
+    const wFxRate = wCurrency === "TWD" ? 1 : (parseFloat(wForm.fxRate) || 0);
+    const priceOrig = Number(wForm.price) || 0;
+    const savedAmtOrig = Number(wForm.savedAmt) || 0;
     const item = {
       ...wForm,
       id: editId || "w" + Date.now(),
-      price: Number(wForm.price) || 0,
-      savedAmt: Number(wForm.savedAmt) || 0,
+      price: window.pfToTWD(priceOrig, wCurrency, wFxRate),
+      savedAmt: window.pfToTWD(savedAmtOrig, wCurrency, wFxRate),
+      priceOrig, savedAmtOrig, currency: wCurrency, fxRate: wFxRate,
       completedAt,
       ledger: editId ? (wishlist.find(i => i.id === editId)?.ledger ?? ledger) : ledger
     };
@@ -13011,20 +13255,29 @@ function PF11Final() {
   };
   const openEditPre = item => {
     setEditId(item.id);
+    // 編輯時顯示「原始輸入幣別金額」（xxxOrig），舊資料沒有就用已存的台幣金額（視為 TWD）
     setPForm({
       ...item,
-      amount: String(item.amount),
-      paidAmt: String(item.paidAmt)
+      amount: String(item.amountOrig != null ? item.amountOrig : item.amount),
+      paidAmt: String(item.paidAmtOrig != null ? item.paidAmtOrig : item.paidAmt),
+      currency: item.currency || "TWD",
+      fxRate: item.fxRate || 1
     });
     setModal(MODAL_PRE);
   };
   const savePre = () => {
     if (!pForm.name.trim()) return;
+    // 金額/已付金額用同一個幣別輸入，存檔前統一換算成台幣（既有的加總邏輯不用改）
+    const pCurrency = pForm.currency || "TWD";
+    const pFxRate = pCurrency === "TWD" ? 1 : (parseFloat(pForm.fxRate) || 0);
+    const amountOrig = Number(pForm.amount) || 0;
+    const paidAmtOrig = Number(pForm.paidAmt) || 0;
     const item = {
       ...pForm,
       id: editId || "p" + Date.now(),
-      amount: Number(pForm.amount) || 0,
-      paidAmt: Number(pForm.paidAmt) || 0,
+      amount: window.pfToTWD(amountOrig, pCurrency, pFxRate),
+      paidAmt: window.pfToTWD(paidAmtOrig, pCurrency, pFxRate),
+      amountOrig, paidAmtOrig, currency: pCurrency, fxRate: pFxRate,
       ledger: editId ? (preorders.find(i => i.id === editId)?.ledger ?? ledger) : ledger
     };
     savePreorders(editId ? preorders.map(i => i.id === editId ? item : i) : [item, ...preorders]);
@@ -14099,7 +14352,13 @@ function PF11Final() {
       ...inputStyle,
       fontFamily: "var(--font-en)"
     }
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+    currency: wForm.currency,
+    rate: wForm.fxRate,
+    amount: parseFloat(wForm.price) || 0,
+    onCurrencyChange: c => setWForm(f => ({ ...f, currency: c })),
+    onRateChange: r => setWForm(f => ({ ...f, fxRate: r }))
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: 10
@@ -14433,7 +14692,13 @@ function PF11Final() {
       ...inputStyle,
       fontFamily: "var(--font-en)"
     }
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+    currency: pForm.currency,
+    rate: pForm.fxRate,
+    amount: parseFloat(pForm.amount) || 0,
+    onCurrencyChange: c => setPForm(f => ({ ...f, currency: c })),
+    onRateChange: r => setPForm(f => ({ ...f, fxRate: r }))
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "center",
@@ -15920,7 +16185,7 @@ window.saveTx = function (tx) {
   return tx;
 };
 
-// 【乾淨版】關閉所有種子範例資料與各頁面內建示範資料，上線給測試者的 App 一開始是完全空白狀態
+// 乾淨版（GitHub Pages 上傳用）：關閉所有種子資料，避免覆蓋使用者真實資料
 window.PF_SEED_DISABLED = true;
 
 // ── 種子資料：pf_transactions（1–4 月各 20 筆，若 localStorage 為空自動填入）
@@ -16251,6 +16516,9 @@ function AddTxSheet({
   const [showNote, setShowNote] = React.useState(false);
   const [showCatMgr, setShowCatMgr] = React.useState(false); // 分類管理
   const [txDate, setTxDate] = React.useState('');
+  // 幣別與手動匯率（轉帳一律視為台幣，不顯示幣別選擇）
+  const [currency, setCurrency] = React.useState('TWD');
+  const [fxRate, setFxRate] = React.useState(1);
   // 計算機狀態
   const [calcDisplay, setCalcDisplay] = React.useState('');
   const [calcEq, setCalcEq] = React.useState('');
@@ -16273,6 +16541,8 @@ function AddTxSheet({
       setShowCatMgr(false);
       setCalcDisplay('');
       setCalcEq('');
+      setCurrency('TWD');
+      setFxRate(1);
       const first = (window.ACCT_NAMES || [])[0] || '';
       const second = (window.ACCT_NAMES || [])[1] || '';
       setAcc(defaultAcc || first);
@@ -16341,9 +16611,14 @@ function AddTxSheet({
         acc: toAcc || acctList[1] || ''
       });
     } else {
+      // 非台幣：amount 改存換算後的台幣金額，原始輸入金額存在 amountOrig（給日後編輯用）
+      const amtTWD = window.pfToTWD(amt, currency, fxRate);
       window.saveTx({
         type,
-        amount: amt,
+        amount: amtTWD,
+        amountOrig: amt,
+        currency,
+        fxRate,
         cat: safeCat?.emoji || '📝',
         catName: safeCat?.label || '其他',
         note: note.trim() || safeCat?.label || '',
@@ -16356,7 +16631,7 @@ function AddTxSheet({
     if (includeAsset && !isTransfer) {
       window.PENDING_ASSET = {
         name: note.trim() || safeCat?.label || '新資產',
-        amount: amt
+        amount: window.pfToTWD(amt, currency, fxRate)
       };
       onClose();
       window.APP_NAVIGATE && window.APP_NAVIGATE(5);
@@ -16573,7 +16848,7 @@ function AddTxSheet({
       color: tc.color,
       fontFamily: 'var(--font-en)'
     }
-  }, "NT$"), /*#__PURE__*/React.createElement("div", {
+  }, currency === 'TWD' ? 'NT$' : currency), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       color: amount ? 'var(--fg)' : 'var(--fg-4)',
@@ -16587,7 +16862,13 @@ function AddTxSheet({
       fontSize: 14,
       color: 'var(--fg-4)'
     }
-  }, "\uD83D\uDDA9"))), !isTransfer && /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDDA9"))), !isTransfer && /*#__PURE__*/React.createElement(window.PfCurrencyPicker, {
+    currency,
+    rate: fxRate,
+    amount: parseFloat(amount) || 0,
+    onCurrencyChange: setCurrency,
+    onRateChange: setFxRate
+  }), !isTransfer && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 16
     }
