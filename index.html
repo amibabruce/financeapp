@@ -12194,6 +12194,52 @@ function PF10Final() {
   const [ledger, setLedger] = usePfLedgerIndex();
   const [importResult, setImportResult] = React.useState(null); // null | {ok, skip, msg}
   const fileInputRef = React.useRef(null);
+  const backupInputRef = React.useRef(null); // 備份還原用的隱藏 file input
+
+  // ── 所有需要備份/清除的 localStorage key（與 CLAUDE.md 對照表一致）
+  const ALL_DATA_KEYS = ['pf_accounts','pf_transactions','pf_ledgers','pf_positions','pf_debts_in','pf_debts_out',
+    'pf_recurring','pf_assets','pf_memberships','pf_wishlist','pf_preorder','pf_invoices',
+    'pf_categories_exp','pf_categories_inc','pf_asset_cats','pf_cur_ledger','pf_cards','pf_card_bills',
+    'pf_card_txs','pf_reminders','pf_panel_order'];
+
+  // ── 匯出資料：把所有 pf_ 開頭的資料打包成一個 JSON 檔下載（封閉測試時用來備份，避免清快取就遺失）
+  const handleExportData = () => {
+    const data = {};
+    ALL_DATA_KEYS.forEach(k => {
+      const v = localStorage.getItem(k);
+      if (v !== null) data[k] = v;
+    });
+    const payload = { exportedAt: new Date().toISOString(), app: 'FinanceApp', data };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `financeapp-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // ── 備份還原：選擇之前匯出的 JSON 檔，寫回 localStorage
+  const handleRestoreFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const payload = JSON.parse(ev.target.result);
+        const data = payload.data || payload; // 容錯：直接是 key-value 物件也接受
+        Object.keys(data).forEach(k => localStorage.setItem(k, data[k]));
+        window.alert('還原完成，將重新載入頁面套用資料');
+        window.location.reload();
+      } catch (err) {
+        window.alert('還原失敗，請確認選的是本 App 匯出的備份檔：' + err.message);
+      }
+      e.target.value = '';
+    };
+    reader.readAsText(file, 'utf-8');
+  };
 
   // ── Daak CSV 匯入 ──────────────────────────────────────────────────────
   const SKIP_CATS = new Set(['更新餘額','更新欠款','還款','信用卡沖銷','歸還','收回','更新欠款','借出','借入','虧損','收益']);
@@ -12299,11 +12345,11 @@ function PF10Final() {
 
   const onItemClick = (item) => {
     if (item.label === '匯入 CSV') { fileInputRef.current && fileInputRef.current.click(); }
+    if (item.label === '匯出資料') { handleExportData(); }
+    if (item.label === '備份與還原') { backupInputRef.current && backupInputRef.current.click(); }
     if (item.label === '清除所有資料') {
       if (window.confirm('確定要清除所有資料嗎？此操作無法復原。')) {
-        ['pf_transactions','pf_accounts','pf_ledgers','pf_positions','pf_debts_in','pf_debts_out',
-         'pf_recurring','pf_assets','pf_memberships','pf_wishlist','pf_preorder','pf_invoices',
-         'pf_categories_exp','pf_categories_inc'].forEach(k => localStorage.removeItem(k));
+        ALL_DATA_KEYS.forEach(k => localStorage.removeItem(k));
         window.location.reload();
       }
     }
@@ -12625,6 +12671,14 @@ function PF10Final() {
     accept: ".csv",
     style: { display: "none" },
     onChange: handleImportFile
+  }),
+  /* ── 隱藏 file input（備份還原用，選 JSON 備份檔）*/
+  React.createElement("input", {
+    ref: backupInputRef,
+    type: "file",
+    accept: ".json",
+    style: { display: "none" },
+    onChange: handleRestoreFile
   }),
   /* \u2500\u2500 \u532F\u5165\u7D50\u679C Modal */
   importResult && React.createElement("div", {
@@ -15865,7 +15919,11 @@ window.saveTx = function (tx) {
 };
 
 // ── 種子資料：pf_transactions（1–4 月各 20 筆，若 localStorage 為空自動填入）
+// 【乾淨版】關閉所有種子範例資料，上線給測試者的 App 一開始是完全空白狀態
+window.PF_SEED_DISABLED = true;
+
 (function seedTransactions() {
+  if (window.PF_SEED_DISABLED) return; // 乾淨版（上傳用）會設定這個旗標跳過種子資料
   try {
     const existing = JSON.parse(localStorage.getItem('pf_transactions') || '[]');
     if (existing.length > 0) return; // 已有資料，不覆蓋
@@ -15898,6 +15956,7 @@ window.saveTx = function (tx) {
 
 // ── 種子資料：pf_debts_in / pf_debts_out（若 localStorage 為空自動填入，確保 PF1 總覽能讀到）
 (function seedDebts() {
+  if (window.PF_SEED_DISABLED) return; // 乾淨版（上傳用）會設定這個旗標跳過種子資料
   try {
     if (!localStorage.getItem('pf_debts_in')) {
       const defaultIn = [{
@@ -15958,6 +16017,7 @@ window.saveTx = function (tx) {
 
 // ── 種子資料：pf_positions（若 localStorage 為空自動填入，確保 PF1 持倉市值能讀到）
 (function seedPositions() {
+  if (window.PF_SEED_DISABLED) return; // 乾淨版（上傳用）會設定這個旗標跳過種子資料
   try {
     if (!localStorage.getItem('pf_positions')) {
       const defaultPositions = [{
