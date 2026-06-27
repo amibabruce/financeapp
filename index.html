@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- 加到 iOS 主畫面後，用這幾個 meta tag 讓它全螢幕開啟（不顯示 Safari 網址列），但注意：
+     這不會解決「主畫面圖示」跟「Safari 分頁」資料分開存的問題，那是 iOS 本身的限制，
+     兩者是不同的儲存容器，要靠 PF10 設定頁的「匯出資料／備份與還原」手動把資料搬過去。 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="amiba">
 <title>amiba</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -79,7 +85,7 @@ html, body {
 .pf1-tabbar{
   position:absolute;left:14px;right:14px;bottom:calc(env(safe-area-inset-bottom,0) + 12px);
   z-index:10;
-  height:62px;
+  height:68px;
   background:rgba(20,22,28,.68);
   backdrop-filter:blur(30px) saturate(1.6);
   -webkit-backdrop-filter:blur(30px) saturate(1.6);
@@ -89,12 +95,13 @@ html, body {
   box-shadow:0 8px 28px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.08);
 }
 .pf1-tab{
-  flex:1;height:50px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  flex:1;height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
   border-radius:16px;color:var(--fg-3);cursor:pointer;
   transition:all .25s cubic-bezier(.34,1.56,.64,1);
 }
 .pf1-tab.active{background:var(--acc-3);color:var(--acc);}
-.pf1-tab-i{font-size:17px;}
+/* Tab 數量精簡為 5 個（含「更多」）之後，圖示放大讓使用者比較好點按 */
+.pf1-tab-i{font-size:24px;}
 .pf1-tab-l{font-family:var(--font-zh);font-size:10px;font-weight:500;}
 
 .pf1-body{
@@ -4322,10 +4329,11 @@ function PF2Final() {
   const AddTxSheet = window.AddTxSheet || (() => null);
   const [ldgOpen, setLdgOpen] = React.useState(false);
   const [ledger, setLedger] = usePfLedgerIndex();
-  const [selDay, setSelDay] = React.useState(29);
-  const [curMonth, setCurMonth] = React.useState({
-    y: 2026,
-    m: 4
+  // 記帳頁日曆預設要顯示「今天」，不能寫固定日期，否則時間一過畫面就會停在舊月份
+  const [selDay, setSelDay] = React.useState(() => new Date().getDate());
+  const [curMonth, setCurMonth] = React.useState(() => {
+    const n = new Date();
+    return { y: n.getFullYear(), m: n.getMonth() + 1 };
   });
   const [txSheet, setTxSheet] = React.useState({
     open: false,
@@ -12513,7 +12521,44 @@ Object.assign(window, {
 <script>
 /* PF10 設定頁 */
 function PF10Final() {
+  const C = React.createElement; // 簡寫別名，方便新增的「底部導覽列」設定區塊
   const [ldgOpen, setLdgOpen] = React.useState(false);
+  // ── 底部主導覽列可自訂：哪幾個頁面顯示在下方 Tab、順序為何，存在 localStorage: pf_main_tabs
+  const ALL_NAV_DEFS = [
+    {id:0,label:'總覽',icon:'◎'},{id:1,label:'帳務',icon:'☰'},{id:2,label:'定期',icon:'🔄'},
+    {id:3,label:'投資',icon:'📊'},{id:4,label:'借貸',icon:'💳'},{id:5,label:'資產',icon:'🏠'},
+    {id:6,label:'採購',icon:'🛒'},{id:7,label:'發票',icon:'🧾'},{id:8,label:'會員',icon:'📺'},
+    {id:9,label:'提醒',icon:'🔔'},{id:10,label:'設定',icon:'⚙'},{id:11,label:'報表',icon:'📈'},
+    {id:12,label:'信用卡',icon:'💳'}
+  ];
+  const MAX_MAIN_TABS = 4; // 外加固定的「更多」鈕，總共 5 個，圖示才能放大好點按
+  const [mainTabIds, setMainTabIdsLocal] = React.useState(() => window.getMainTabIds());
+  // 勾選/取消某個頁面是否要顯示在底部導覽列
+  const toggleMainTab = (id) => {
+    setMainTabIdsLocal(prev => {
+      let next;
+      if (prev.includes(id)) {
+        if (prev.length <= 1) { alert('至少要保留一個主導覽項目'); return prev; }
+        next = prev.filter(x => x !== id);
+      } else {
+        if (prev.length >= MAX_MAIN_TABS) { alert('主導覽列最多只能選 ' + MAX_MAIN_TABS + ' 個項目（外加「更多」鈕），請先取消一個再新增'); return prev; }
+        next = [...prev, id];
+      }
+      window.setMainTabIds(next);
+      return next;
+    });
+  };
+  // 調整底部導覽列項目的左右順序
+  const moveMainTab = (idx, dir) => {
+    setMainTabIdsLocal(prev => {
+      const t = idx + dir;
+      if (t < 0 || t >= prev.length) return prev;
+      const arr = [...prev];
+      [arr[idx], arr[t]] = [arr[t], arr[idx]];
+      window.setMainTabIds(arr);
+      return arr;
+    });
+  };
   const [ledger, setLedger] = usePfLedgerIndex();
   const [importResult, setImportResult] = React.useState(null); // null | {ok, skip, msg}
   const fileInputRef = React.useRef(null);
@@ -12931,7 +12976,47 @@ function PF10Final() {
       transform: ldgOpen ? "rotate(180deg)" : "rotate(0)",
       transition: "transform .22s"
     }
-  }, "\u25BE")))), sections.map((sec, si) => /*#__PURE__*/React.createElement("div", {
+  }, "\u25BE")))),
+  /* \u2500\u2500 \u5E95\u90E8\u5C0E\u89BD\u5217\u8A2D\u5B9A\uFF1A\u9078\u6700\u591A 4 \u500B\u5E38\u7528\u9801\u9762\u653E\u4E0B\u65B9 Tab\uFF0C\u5176\u9918\u81EA\u52D5\u6536\u9032\u300C\u66F4\u591A\u300D\uFF0C\u5716\u793A\u4E5F\u5DF2\u653E\u5927 */
+  C('div', {style:{padding:'0 16px 18px'}},
+    C('div', {style:{fontFamily:'var(--font-zh)',fontSize:11,color:'var(--fg-3)',padding:'0 6px 6px',letterSpacing:'.05em'}}, '\u5E95\u90E8\u5C0E\u89BD\u5217'),
+    C('div', {style:{background:'var(--card)',backdropFilter:'blur(12px)',border:'.5px solid var(--border)',borderRadius:16,padding:14}},
+      C('div', {style:{fontFamily:'var(--font-zh)',fontSize:12,color:'var(--fg-3)',marginBottom:10,lineHeight:1.5}},
+        `\u9078\u6700\u591A ${MAX_MAIN_TABS} \u500B\u5E38\u7528\u9801\u9762\u653E\u5728\u4E0B\u65B9\u5C0E\u89BD\u5217\uFF08\u5716\u793A\u6BD4\u8F03\u5927\u3001\u597D\u9EDE\u6309\uFF09\uFF0C\u5176\u9918\u7684\u6703\u6536\u9032\u300C\u66F4\u591A\u300D`
+      ),
+      C('div', {style:{display:'flex',flexWrap:'wrap',gap:8,marginBottom:14}},
+        ALL_NAV_DEFS.map(d => {
+          const sel = mainTabIds.includes(d.id);
+          return C('div', {
+            key:d.id, onClick:()=>toggleMainTab(d.id),
+            style:{display:'flex',alignItems:'center',gap:5,padding:'7px 12px',borderRadius:999,cursor:'pointer',
+              fontFamily:'var(--font-zh)',fontSize:12,fontWeight:500,
+              background:sel?'rgba(59,130,246,.18)':'rgba(255,255,255,.06)',
+              color:sel?'var(--acc)':'var(--fg-3)',
+              border:'.5px solid '+(sel?'var(--acc)':'var(--border)')}
+          }, C('span',null,d.icon), C('span',null,d.label));
+        })
+      ),
+      C('div', {style:{fontFamily:'var(--font-zh)',fontSize:11,color:'var(--fg-4)',marginBottom:6}}, '\u6392\u5217\u9806\u5E8F\uFF08\u25C0\u25B6 \u8ABF\u6574\u5DE6\u53F3\u4F4D\u7F6E\uFF09'),
+      C('div', {style:{display:'flex',flexDirection:'column',gap:6}},
+        mainTabIds.map((id, idx) => {
+          const d = ALL_NAV_DEFS.find(x => x.id === id);
+          if (!d) return null;
+          return C('div', {key:id, style:{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:10,background:'rgba(255,255,255,.04)'}},
+            C('span',{style:{fontSize:16}}, d.icon),
+            C('span',{style:{flex:1,fontFamily:'var(--font-zh)',fontSize:13,color:'var(--fg)'}}, d.label),
+            C('div',{onClick:()=>moveMainTab(idx,-1),
+              style:{width:26,height:26,borderRadius:8,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'var(--fg-3)',opacity:idx===0?.3:1}
+            }, '\u25C0'),
+            C('div',{onClick:()=>moveMainTab(idx,1),
+              style:{width:26,height:26,borderRadius:8,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'var(--fg-3)',opacity:idx===mainTabIds.length-1?.3:1}
+            }, '\u25B6')
+          );
+        })
+      )
+    )
+  ),
+  sections.map((sec, si) => /*#__PURE__*/React.createElement("div", {
     key: si,
     style: {
       padding: "0 16px 18px"
@@ -16550,6 +16635,11 @@ function CatManagerSheet({open, onClose, initType}) {
   const [showAdd, setShowAdd] = React.useState(false);
   const [newEmoji, setNewEmoji] = React.useState('');
   const [newLabel, setNewLabel] = React.useState('');
+  // emoji 選擇器：點一下 emoji 輸入框，下面會展開常用 emoji 方塊可以直接點選，不用自己找/貼上
+  const [pickerOpen, setPickerOpen] = React.useState(null); // null | 'edit' | 'add'
+  const EMOJI_CHOICES = ['🍜','🍱','🍔','☕','🧋','🛒','👗','👟','💊','🏥','📚','✏️','🎬','🎮','🎵',
+    '✈️','🚗','🚇','⛽','🅿️','🏠','💡','💧','📱','💻','🎁','🧧','💰','💵','📈','📉','🏦','💳',
+    '🐾','⚽','💄','👶','🧸','🎉','🛠️','🧹','📦','🔧','🙏','🧾','📌','❓'];
 
   React.useEffect(() => {
     if (open) {
@@ -16586,12 +16676,12 @@ function CatManagerSheet({open, onClose, initType}) {
     } catch { return {}; }
   }, [open, activeType]);
 
-  const delCat = id => { const nl = cats.filter(c => c.id !== id); setCats(nl); save(activeType, nl); setEditId(null); };
-  const startEdit = c => { setEditId(c.id); setEditEmoji(c.emoji); setEditLabel(c.label); setShowAdd(false); };
+  const delCat = id => { const nl = cats.filter(c => c.id !== id); setCats(nl); save(activeType, nl); setEditId(null); setPickerOpen(null); };
+  const startEdit = c => { setEditId(c.id); setEditEmoji(c.emoji); setEditLabel(c.label); setShowAdd(false); setPickerOpen(null); };
   const commitEdit = () => {
     if (!editLabel.trim()) { alert('請先輸入分類名稱'); return; }
     const nl = cats.map(c => c.id === editId ? Object.assign({}, c, {emoji: editEmoji.trim() || c.emoji, label: editLabel.trim()}) : c);
-    setCats(nl); save(activeType, nl); setEditId(null);
+    setCats(nl); save(activeType, nl); setEditId(null); setPickerOpen(null);
   };
   const addCatNew = () => {
     // 原本的 bug：emoji 欄位沒填時 newEmoji 會是空字串，這裡會直接 return，
@@ -16603,7 +16693,7 @@ function CatManagerSheet({open, onClose, initType}) {
     const newCat = {id: String(Date.now()), emoji: emoji, label: newLabel.trim()};
     if (activeType === 'expense') newCat.group = groupFilter || '其他';
     const nl = cats.concat([newCat]);
-    setCats(nl); save(activeType, nl); setNewEmoji(''); setNewLabel(''); setShowAdd(false);
+    setCats(nl); save(activeType, nl); setNewEmoji(''); setNewLabel(''); setShowAdd(false); setPickerOpen(null);
   };
   // 點一下大分類標籤就換下一個（一般→生活→學習→交通→保險→醫療→投資→其他→一般...），只有支出類別有這個欄位
   const cycleGroup = id => {
@@ -16673,6 +16763,14 @@ function CatManagerSheet({open, onClose, initType}) {
     setCats(nl); save('expense', nl);
     if (groupFilter === name) setGroupFilter(fallbackGroup);
   };
+
+  // emoji 選擇器方塊：picker 開在哪個面板（'edit' 或 'add'）就顯示在那個面板下面，點一下方塊直接套用
+  const renderEmojiPicker = (which, setFn) => pickerOpen === which ? C('div', {
+    style:{display:'flex',flexWrap:'wrap',gap:6,padding:'10px 2px 2px',marginBottom:10,maxHeight:140,overflowY:'auto',borderTop:'.5px solid var(--border)'}
+  }, EMOJI_CHOICES.map(e => C('span', {
+    key:e, onClick:function(){setFn(e); setPickerOpen(null);},
+    style:{width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,borderRadius:9,background:'rgba(255,255,255,.06)',cursor:'pointer'}
+  }, e))) : null;
 
   if (!open) return null;
 
@@ -16772,7 +16870,7 @@ function CatManagerSheet({open, onClose, initType}) {
         }),
         /* 新增方塊（排序模式中先隱藏，避免誤觸） */
         !sortMode ? C('div', {
-          onClick:function(){setShowAdd(function(s){return !s;});setEditId(null);setNewEmoji('');setNewLabel('');},
+          onClick:function(){setShowAdd(function(s){return !s;});setEditId(null);setNewEmoji('');setNewLabel('');setPickerOpen(null);},
           style:{padding:'12px 4px 10px',borderRadius:14,cursor:'pointer',background:showAdd?'rgba(59,130,246,.12)':'rgba(255,255,255,.03)',border:'1.5px dashed '+(showAdd?'var(--acc)':'var(--border)'),display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:4,minHeight:62}
         },
           C('span', {style:{fontSize:20,color:'var(--acc)'}}, '＋'),
@@ -16783,11 +16881,13 @@ function CatManagerSheet({open, onClose, initType}) {
       /* ── 編輯面板：點方塊後在下方展開，可改 emoji／名稱／所屬大分類，或刪除 */
       editingCat ? C('div', {style:{marginTop:16,padding:14,borderRadius:14,background:'rgba(255,255,255,.05)',border:'.5px solid var(--border)'}},
         C('div', {style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
-          C('input', {value:editEmoji, onChange:function(e){setEditEmoji(e.target.value);}, maxLength:2,
-            style:Object.assign({},inpBase,{width:46,height:46,borderRadius:12,fontSize:22,textAlign:'center'})}),
+          C('input', {value:editEmoji, onChange:function(e){setEditEmoji(e.target.value);}, onClick:function(){setPickerOpen(function(p){return p==='edit'?null:'edit';});}, maxLength:2,
+            style:Object.assign({},inpBase,{width:46,height:46,borderRadius:12,fontSize:22,textAlign:'center',cursor:'pointer'})}),
           C('input', {value:editLabel, onChange:function(e){setEditLabel(e.target.value);}, autoFocus:true,
             style:Object.assign({},inpBase,{flex:1,height:46,borderRadius:12,padding:'0 12px',fontSize:15})})
         ),
+        /* 點 emoji 框會展開的選擇器：直接點方塊套用，不用自己打字或貼上 emoji */
+        renderEmojiPicker('edit', setEditEmoji),
         /* 大分類標籤：點一下可循環切換 8 個大分類，只有支出類別才有 */
         activeType === 'expense' ? C('div', {style:{marginBottom:10,display:'flex',alignItems:'center'}},
           C('span', {style:{fontSize:11,fontFamily:'var(--font-zh)',color:'var(--fg-4)',marginRight:8}}, '所屬大分類：'),
@@ -16796,21 +16896,23 @@ function CatManagerSheet({open, onClose, initType}) {
         ) : null,
         C('div', {style:{display:'flex',gap:8}},
           C('div', {onClick:function(){delCat(editId);}, style:{width:46,height:42,borderRadius:11,background:'rgba(255,95,87,.15)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17,cursor:'pointer'}}, '🗑'),
-          C('div', {onClick:function(){setEditId(null);}, style:{flex:1,height:42,borderRadius:11,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,color:'var(--fg-3)',cursor:'pointer'}}, '取消'),
+          C('div', {onClick:function(){setEditId(null);setPickerOpen(null);}, style:{flex:1,height:42,borderRadius:11,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,color:'var(--fg-3)',cursor:'pointer'}}, '取消'),
           C('div', {onClick:commitEdit, style:{flex:1,height:42,borderRadius:11,background:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:700,color:'#fff',cursor:'pointer'}}, '儲存')
         )
       ) : null,
       /* ── 新增面板：點「＋新增」方塊後在下方展開 */
       showAdd ? C('div', {style:{marginTop:16,padding:14,borderRadius:14,background:'rgba(255,255,255,.05)',border:'.5px solid var(--border)'}},
         C('div', {style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
-          C('input', {value:newEmoji, onChange:function(e){setNewEmoji(e.target.value);}, placeholder:'📦', maxLength:2,
-            style:Object.assign({},inpBase,{width:46,height:46,borderRadius:12,fontSize:22,textAlign:'center'})}),
+          C('input', {value:newEmoji, onChange:function(e){setNewEmoji(e.target.value);}, onClick:function(){setPickerOpen(function(p){return p==='add'?null:'add';});}, placeholder:'📦', maxLength:2,
+            style:Object.assign({},inpBase,{width:46,height:46,borderRadius:12,fontSize:22,textAlign:'center',cursor:'pointer'})}),
           C('input', {value:newLabel, onChange:function(e){setNewLabel(e.target.value);}, placeholder:'分類名稱', autoFocus:true,
             style:Object.assign({},inpBase,{flex:1,height:46,borderRadius:12,padding:'0 12px',fontSize:15})})
         ),
+        /* 點 emoji 框會展開的選擇器：直接點方塊套用，不用自己打字或貼上 emoji */
+        renderEmojiPicker('add', setNewEmoji),
         activeType === 'expense' ? C('div', {style:{marginBottom:10,fontSize:11,fontFamily:'var(--font-zh)',color:'var(--fg-4)'}}, '將加入「'+groupFilter+'」大分類（之後可在方塊上點一下調整）') : null,
         C('div', {style:{display:'flex',gap:8}},
-          C('div', {onClick:function(){setShowAdd(false);setNewEmoji('');setNewLabel('');}, style:{flex:1,height:42,borderRadius:11,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,color:'var(--fg-3)',cursor:'pointer'}}, '取消'),
+          C('div', {onClick:function(){setShowAdd(false);setNewEmoji('');setNewLabel('');setPickerOpen(null);}, style:{flex:1,height:42,borderRadius:11,background:'rgba(255,255,255,.08)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:600,color:'var(--fg-3)',cursor:'pointer'}}, '取消'),
           C('div', {onClick:addCatNew, style:{flex:1,height:42,borderRadius:11,background:'var(--acc)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-zh)',fontSize:14,fontWeight:700,color:'#fff',cursor:'pointer'}}, '新增')
         )
       ) : null
@@ -17937,12 +18039,34 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ── 底部主導覽列可顯示的頁面：可在 PF10「設定」頁自訂，存在 localStorage: pf_main_tabs
+// 預設 4 項（總覽/帳務/定期/資產）+ 固定的「更多」按鈕，圖示放大方便點按
+window.MAIN_TAB_DEFAULT = [0, 1, 2, 5];
+window.getMainTabIds = function () {
+  try {
+    const saved = JSON.parse(localStorage.getItem('pf_main_tabs') || 'null');
+    if (saved && Array.isArray(saved) && saved.length) return saved;
+  } catch (e) {}
+  return window.MAIN_TAB_DEFAULT;
+};
+window.setMainTabIds = function (ids) {
+  try { localStorage.setItem('pf_main_tabs', JSON.stringify(ids)); } catch (e) {}
+  window.dispatchEvent(new Event('pf-main-tabs-updated'));
+};
+
 function App() {
   const [tab, setTab] = React.useState(0);
   const [moreOpen, setMoreOpen] = React.useState(false);
   // 讓子元件（AddTxSheet 等）可以跨頁導航
   React.useEffect(() => {
     window.APP_NAVIGATE = id => setTab(id);
+  }, []);
+  // 主導覽列項目可在設定頁修改，這裡監聽變更事件即時套用
+  const [mainTabIds, setMainTabIdsLocal] = React.useState(() => window.getMainTabIds());
+  React.useEffect(() => {
+    const h = () => setMainTabIdsLocal(window.getMainTabIds());
+    window.addEventListener('pf-main-tabs-updated', h);
+    return () => window.removeEventListener('pf-main-tabs-updated', h);
   }, []);
   const tabs = [{
     id: 0,
@@ -18012,8 +18136,9 @@ function App() {
     icon: "💳",
     component: window.PF13Final
   }];
-  const mainTabs = tabs.slice(0, 6); // 總覽、帳務、定期、投資、借貸、資產
-  const moreTabs = tabs.slice(6); // 採買、發票、會員、提醒、設定
+  // 主導覽列改成可自訂：依 mainTabIds 的順序挑出對應頁面，其餘全部收進「更多」
+  const mainTabs = mainTabIds.map(id => tabs.find(t => t.id === id)).filter(Boolean);
+  const moreTabs = tabs.filter(t => !mainTabIds.includes(t.id));
   const CurrentPage = tabs[tab].component;
   return /*#__PURE__*/React.createElement("div", {
     className: "pf1-screen"
@@ -18095,7 +18220,7 @@ function App() {
   }, t.icon), /*#__PURE__*/React.createElement("div", {
     className: "pf1-tab-l"
   }, t.label))), /*#__PURE__*/React.createElement("div", {
-    className: `pf1-tab ${tab >= 6 ? 'active' : ''}`,
+    className: `pf1-tab ${!mainTabIds.includes(tab) ? 'active' : ''}`,
     onClick: () => setMoreOpen(!moreOpen)
   }, /*#__PURE__*/React.createElement("div", {
     className: "pf1-tab-i"
